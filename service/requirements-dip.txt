@@ -1,0 +1,6 @@
+# Install torch==2.6.0 from the official cu124 index separately.
+numpy==1.26.4
+scipy>=1.11,<2
+transformers==5.8.1
+joblib==1.6.0
+gradio-client==2.7.2

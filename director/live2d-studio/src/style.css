@@ -1,0 +1,1449 @@
+@import url("../../assets/css/vue/foundation.css");
+@import url("../../assets/css/vue/pages/live2d.css");
+
+.studio-app-shell {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+.studio-left-rail {
+  position: fixed;
+  top: 1rem;
+  left: 0.85rem;
+  bottom: 1rem;
+  z-index: 48;
+  width: 5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.72rem 0.5rem;
+  border: 1px solid rgba(144, 153, 173, 0.20);
+  border-radius: 12px;
+  color: rgba(32, 43, 70, 0.94);
+  background: rgba(255, 255, 255, 0.80);
+  box-shadow: 0 24px 68px rgba(37, 48, 70, 0.12);
+  backdrop-filter: none;
+}
+
+.studio-rail-brand {
+  width: 3.15rem;
+  height: 3.15rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(172, 77, 109, 0.32);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(172, 77, 109, 0.18), rgba(111, 98, 180, 0.2));
+  box-shadow: inset 0 0 0 1px rgba(98, 110, 132, 0.08), 0 14px 34px rgba(172, 77, 109, 0.10);
+}
+
+.studio-rail-brand span {
+  color: #ffffff;
+  font-size: 1.42rem;
+  font-weight: 950;
+}
+
+.studio-left-rail nav {
+  width: 100%;
+  display: grid;
+  gap: 0.52rem;
+}
+
+.studio-rail-item {
+  width: 100%;
+  min-height: 4.15rem;
+  display: grid;
+  place-items: center;
+  gap: 0.28rem;
+  border: 1px solid rgba(144, 153, 173, 0.20);
+  border-radius: 12px;
+  color: rgba(32, 43, 70, 0.60);
+  background: rgba(98, 110, 132, 0.045);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 850;
+  cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.studio-rail-item svg {
+  color: currentColor;
+}
+
+.studio-rail-item span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-rail-item:hover,
+.studio-rail-item.active {
+  transform: translateY(-1px);
+  border-color: rgba(172, 77, 109, 0.44);
+  color: rgba(32, 43, 70, 0.96);
+  background: rgba(172, 77, 109, 0.12);
+}
+
+.studio-rail-settings {
+  margin-top: auto;
+}
+
+.studio-rail-avatar {
+  width: 100%;
+  min-height: 5.25rem;
+  display: grid;
+  place-items: center;
+  gap: 0.12rem;
+  border: 1px solid rgba(172, 77, 109, 0.2);
+  border-radius: 12px;
+  color: rgba(32, 43, 70, 0.90);
+  background: rgba(172, 77, 109, 0.08);
+}
+
+.studio-rail-avatar svg {
+  color: rgba(172, 77, 109, 0.92);
+}
+
+.studio-rail-avatar strong,
+.studio-rail-avatar em {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-rail-avatar strong {
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.studio-rail-avatar em {
+  color: rgba(32, 43, 70, 0.60);
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.studio-floating-toolbar {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 52;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.studio-icon-btn,
+.studio-primary-btn,
+.studio-secondary-btn,
+.studio-settings-tabs button {
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  color: rgba(32, 43, 70, 0.94);
+  background: rgba(98, 110, 132, 0.08);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.studio-icon-btn {
+  width: 2.45rem;
+  height: 2.45rem;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.80);
+  box-shadow: 0 12px 34px rgba(37, 48, 70, 0.12);
+  backdrop-filter: none;
+}
+
+.studio-icon-btn:hover,
+.studio-primary-btn:hover,
+.studio-secondary-btn:hover,
+.studio-settings-tabs button:hover {
+  border-color: rgba(172, 77, 109, 0.50);
+  background: rgba(172, 77, 109, 0.16);
+  transform: translateY(-1px);
+}
+
+.studio-settings-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  border: 0;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.80);
+  cursor: default;
+}
+
+.studio-settings-panel {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 60;
+  width: min(28rem, calc(100vw - 2rem));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  color: rgba(32, 43, 70, 0.94);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 24px 72px rgba(37, 48, 70, 0.12);
+  backdrop-filter: none;
+}
+
+.studio-settings-header {
+  min-height: 4.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid rgba(32, 43, 70, 0.60);
+}
+
+.studio-settings-header div {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.studio-settings-header span {
+  color: rgba(32, 43, 70, 0.60);
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.studio-settings-header strong {
+  font-size: 1.05rem;
+}
+
+.studio-settings-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+  padding: 0.75rem 1rem 0.2rem;
+}
+
+.studio-settings-tabs button {
+  min-height: 2.25rem;
+  color: rgba(32, 43, 70, 0.68);
+  font-size: 0.78rem;
+}
+
+.studio-settings-tabs button.active {
+  border-color: rgba(172, 77, 109, 0.50);
+  color: rgba(32, 43, 70, 0.94);
+  background: rgba(172, 77, 109, 0.17);
+}
+
+.studio-settings-form {
+  min-height: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.studio-settings-section {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem 1rem;
+  overflow: auto;
+}
+
+.studio-settings-section label {
+  min-width: 0;
+  display: grid;
+  gap: 0.36rem;
+  color: rgba(32, 43, 70, 0.70);
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.studio-wide-field,
+.studio-check-row {
+  grid-column: 1 / -1;
+}
+
+.studio-check-row {
+  min-height: 2.45rem;
+  display: flex !important;
+  align-items: center;
+  gap: 0.56rem !important;
+  padding: 0 0.72rem;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  background: rgba(98, 110, 132, 0.06);
+}
+
+.studio-check-row input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: #9ee8ff;
+}
+
+.studio-settings-section input:not([type="checkbox"]),
+.studio-settings-section select,
+.studio-settings-section textarea {
+  width: 100%;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.66rem 0.72rem;
+  outline: none;
+  color: rgba(32, 43, 70, 0.94);
+  background: rgba(255, 255, 255, 0.80);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.studio-settings-section textarea {
+  min-height: 8rem;
+  resize: vertical;
+}
+
+.studio-settings-section input:focus,
+.studio-settings-section select:focus,
+.studio-settings-section textarea:focus {
+  border-color: rgba(172, 77, 109, 0.54);
+  box-shadow: 0 0 0 3px rgba(172, 77, 109, 0.10);
+}
+
+.studio-memory-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 0.55rem;
+}
+
+.studio-memory-console {
+  min-width: 0;
+  display: grid;
+  gap: 0.78rem;
+}
+
+.studio-memory-overview {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(11rem, 0.78fr) minmax(0, 1fr);
+  gap: 0.62rem;
+  align-items: end;
+}
+
+.studio-memory-overview .studio-check-row {
+  grid-column: auto;
+  min-width: 0;
+}
+
+.studio-memory-provider-select {
+  min-width: 0;
+}
+
+.studio-memory-status-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.25rem, 1fr));
+  gap: 0.55rem;
+}
+
+.studio-memory-status-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.55rem;
+  row-gap: 0.12rem;
+  align-items: center;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.62rem 0.66rem;
+  background: rgba(98, 110, 132, 0.055);
+}
+
+.studio-memory-status-card .ts-icon {
+  grid-row: 1 / span 2;
+  color: rgba(172, 77, 109, 0.78);
+}
+
+.studio-memory-status-card span {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(32, 43, 70, 0.60);
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.studio-memory-status-card strong {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(32, 43, 70, 0.92);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-memory-block {
+  min-width: 0;
+  display: grid;
+  gap: 0.62rem;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.72rem;
+  background: rgba(255, 255, 255, 0.80);
+}
+
+.studio-memory-block-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.46rem;
+  color: rgba(32, 43, 70, 0.82);
+}
+
+.studio-memory-block-head .ts-icon {
+  flex: 0 0 auto;
+  color: rgba(172, 77, 109, 0.76);
+}
+
+.studio-memory-block-head h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 0.79rem;
+  font-weight: 950;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-memory-block-head .studio-memory-stats {
+  margin-left: auto;
+}
+
+.studio-memory-advanced {
+  min-width: 0;
+  display: grid;
+  gap: 0.56rem;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.52rem 0.58rem;
+  background: rgba(98, 110, 132, 0.035);
+}
+
+.studio-memory-advanced summary {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  color: rgba(32, 43, 70, 0.68);
+  font-size: 0.74rem;
+  font-weight: 900;
+  cursor: pointer;
+  list-style: none;
+}
+
+.studio-memory-advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.studio-memory-advanced[open] summary {
+  margin-bottom: 0.56rem;
+}
+
+.studio-memory-toolbar,
+.studio-memory-search,
+.studio-memory-results-head,
+.studio-memory-note header,
+.studio-memory-note footer,
+.studio-memory-note-actions,
+.studio-memory-switches {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.studio-memory-toolbar,
+.studio-memory-note header,
+.studio-memory-note footer {
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.studio-memory-toolbar .studio-check-row {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.studio-memory-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+  min-width: 11rem;
+}
+
+.studio-memory-stats span,
+.studio-memory-tags span,
+.studio-memory-note em,
+.studio-memory-selected span {
+  min-width: 0;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 999px;
+  padding: 0.32rem 0.46rem;
+  overflow: hidden;
+  color: rgba(32, 43, 70, 0.72);
+  background: rgba(98, 110, 132, 0.06);
+  font-size: 0.68rem;
+  font-weight: 850;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-memory-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.studio-memory-switches {
+  gap: 0.55rem;
+}
+
+.studio-memory-switches .studio-check-row {
+  flex: 1;
+}
+
+.studio-memory-search {
+  align-items: end;
+  gap: 0.55rem;
+}
+
+.studio-memory-search label {
+  flex: 1;
+}
+
+.studio-memory-search button {
+  min-width: 5.4rem;
+}
+
+.studio-memory-results {
+  min-height: 12rem;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0.5rem;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.64rem;
+  background: rgba(255, 255, 255, 0.80);
+}
+
+.studio-memory-results-head {
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: rgba(32, 43, 70, 0.82);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.studio-memory-results-head small,
+.studio-memory-note small {
+  color: rgba(32, 43, 70, 0.60);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.studio-memory-note-list {
+  min-height: 0;
+  max-height: 24rem;
+  display: grid;
+  gap: 0.52rem;
+  overflow: auto;
+  padding-right: 0.18rem;
+}
+
+.studio-memory-note {
+  min-width: 0;
+  display: grid;
+  gap: 0.44rem;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.7rem;
+  background: rgba(98, 110, 132, 0.055);
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.studio-memory-note:hover,
+.studio-memory-note.selected {
+  border-color: rgba(172, 77, 109, 0.45);
+  background: rgba(172, 77, 109, 0.12);
+}
+
+.studio-memory-note.disabled {
+  opacity: 0.62;
+}
+
+.studio-memory-note header div {
+  min-width: 0;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.studio-memory-note strong,
+.studio-memory-selected strong {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(32, 43, 70, 0.94);
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-memory-note header span {
+  color: rgba(172, 77, 109, 0.74);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.studio-memory-note em {
+  flex: 0 0 auto;
+  color: rgba(161, 115, 53, 0.9);
+  font-style: normal;
+}
+
+.studio-memory-note code {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(32, 43, 70, 0.60);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-memory-note p {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  color: rgba(32, 43, 70, 0.72);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.studio-memory-tags {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.studio-memory-tags span {
+  max-width: 7rem;
+  padding: 0.24rem 0.42rem;
+}
+
+.studio-memory-note-actions {
+  justify-content: end;
+  gap: 0.45rem;
+}
+
+.studio-memory-note-actions .studio-secondary-btn {
+  min-height: 2rem;
+  padding: 0 0.58rem;
+}
+
+.studio-memory-empty {
+  min-height: 8rem;
+  display: grid;
+  place-items: center;
+  border: 1px dashed rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  color: rgba(32, 43, 70, 0.60);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.studio-memory-selected {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  border: 1px solid rgba(172, 77, 109, 0.20);
+  border-radius: 12px;
+  padding: 0.55rem 0.65rem;
+  background: rgba(172, 77, 109, 0.10);
+}
+
+.studio-primary-btn:disabled,
+.studio-secondary-btn:disabled,
+.studio-icon-btn:disabled,
+.studio-settings-tabs button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
+}
+
+.studio-settings-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.78rem 1rem;
+  border-top: 1px solid rgba(32, 43, 70, 0.60);
+  background: rgba(255, 255, 255, 0.80);
+}
+
+.studio-settings-status {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(172, 77, 109, 0.86);
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-primary-btn,
+.studio-secondary-btn {
+  min-height: 2.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.42rem;
+  padding: 0 0.78rem;
+  font-size: 0.78rem;
+}
+
+.studio-primary-btn {
+  border-color: rgba(172, 77, 109, 0.42);
+  background: rgba(172, 77, 109, 0.18);
+}
+
+.studio-secondary-btn {
+  color: rgba(32, 43, 70, 0.72);
+}
+
+.studio-music-page {
+  position: fixed;
+  inset: 0;
+  overflow: auto;
+  padding: 1rem 1rem 1rem 7rem;
+  color: rgba(32, 43, 70, 0.94);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.96)),
+    #f7f9fc;
+}
+
+.studio-music-toolbar {
+  min-height: 4.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.8rem 0.9rem;
+  background: rgba(98, 110, 132, 0.055);
+}
+
+.studio-music-toolbar header,
+.studio-music-card header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.studio-music-toolbar header {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.studio-music-toolbar span,
+.studio-music-card header h2,
+.studio-music-card label span,
+.studio-music-now span,
+.studio-music-status-grid span {
+  color: rgba(32, 43, 70, 0.60);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.studio-music-toolbar strong {
+  font-size: 1.16rem;
+  font-weight: 950;
+}
+
+.studio-music-grid {
+  display: grid;
+  grid-template-columns: minmax(18rem, 0.9fr) minmax(22rem, 1.15fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.studio-music-card {
+  min-width: 0;
+  display: grid;
+  gap: 0.72rem;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.82rem;
+  background: rgba(98, 110, 132, 0.055);
+}
+
+.studio-music-card header h2 {
+  margin: 0;
+  color: rgba(32, 43, 70, 0.90);
+  font-size: 0.82rem;
+}
+
+.studio-music-card header .ts-icon {
+  color: rgba(172, 77, 109, 0.80);
+}
+
+.studio-music-card label {
+  min-width: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.studio-music-card input:not([type="checkbox"]),
+.studio-music-card select {
+  width: 100%;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.64rem 0.7rem;
+  outline: none;
+  color: rgba(32, 43, 70, 0.94);
+  background: rgba(255, 255, 255, 0.80);
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.studio-music-card input:focus,
+.studio-music-card select:focus {
+  border-color: rgba(172, 77, 109, 0.54);
+  box-shadow: 0 0 0 3px rgba(172, 77, 109, 0.10);
+}
+
+.studio-music-settings-row,
+.studio-music-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.studio-music-account,
+.studio-music-qr {
+  min-width: 0;
+  display: grid;
+  align-items: center;
+  gap: 0.58rem;
+  border: 1px solid rgba(255, 96, 117, 0.2);
+  border-radius: 12px;
+  padding: 0.62rem;
+  background: rgba(255, 80, 103, 0.055);
+}
+
+.studio-music-account {
+  grid-template-columns: 2.3rem minmax(0, 1fr) auto;
+}
+
+.studio-music-account > img,
+.studio-music-account > .ts-icon {
+  width: 2.3rem;
+  height: 2.3rem;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.studio-music-account > div,
+.studio-music-qr > div {
+  min-width: 0;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.studio-music-account strong,
+.studio-music-qr strong {
+  overflow: hidden;
+  color: rgba(32, 43, 70, 0.92);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-music-account small,
+.studio-music-qr small {
+  color: rgba(32, 43, 70, 0.60);
+  font-size: 0.7rem;
+}
+
+.studio-music-account .studio-primary-btn,
+.studio-music-account .studio-secondary-btn {
+  min-height: 2.2rem;
+  padding: 0 0.66rem;
+}
+
+.studio-music-qr {
+  grid-template-columns: 7rem minmax(0, 1fr);
+}
+
+.studio-music-qr > img {
+  width: 7rem;
+  height: 7rem;
+  border-radius: 12px;
+  background: #202b46;
+}
+
+.studio-music-actions,
+.studio-music-search-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.studio-music-search-form {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.studio-music-search-form input {
+  min-width: 0;
+  flex: 1;
+}
+
+.studio-music-song-list {
+  max-height: 24rem;
+  display: grid;
+  gap: 0.46rem;
+  overflow: auto;
+  padding-right: 0.18rem;
+}
+
+.studio-music-song {
+  min-width: 0;
+  display: grid;
+  gap: 0.16rem;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.62rem 0.7rem;
+  color: rgba(32, 43, 70, 0.90);
+  background: rgba(255, 255, 255, 0.80);
+  text-align: left;
+  cursor: pointer;
+}
+
+.studio-music-song:hover,
+.studio-music-song.selected {
+  border-color: rgba(172, 77, 109, 0.45);
+  background: rgba(172, 77, 109, 0.10);
+}
+
+.studio-music-song span,
+.studio-music-now strong {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-music-song small,
+.studio-music-now small {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(32, 43, 70, 0.60);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-music-now,
+.studio-music-status-grid div {
+  min-width: 0;
+  display: grid;
+  gap: 0.16rem;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.64rem 0.7rem;
+  background: rgba(255, 255, 255, 0.80);
+}
+
+.studio-music-status-grid strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.88rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-music-log {
+  max-height: 18rem;
+  display: grid;
+  gap: 0.45rem;
+  overflow: auto;
+  padding-right: 0.18rem;
+}
+
+.studio-music-log article {
+  min-width: 0;
+  display: grid;
+  gap: 0.28rem;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.58rem 0.64rem;
+  background: rgba(255, 255, 255, 0.80);
+}
+
+.studio-music-log article.ok {
+  border-color: rgba(59, 137, 115, 0.32);
+}
+
+.studio-music-log article.warn {
+  border-color: rgba(161, 115, 53, 0.32);
+}
+
+.studio-music-log article.error {
+  border-color: rgba(255, 122, 122, 0.34);
+}
+
+.studio-music-log time {
+  color: rgba(172, 77, 109, 0.72);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.studio-music-log span,
+.studio-music-song-list p,
+.studio-music-log p {
+  margin: 0;
+  color: rgba(32, 43, 70, 0.68);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.studio-music-log pre {
+  max-height: 8rem;
+  margin: 0;
+  overflow: auto;
+  border-radius: 12px;
+  padding: 0.5rem;
+  color: rgba(32, 43, 70, 0.72);
+  background: rgba(37, 48, 70, 0.12);
+  font-size: 0.68rem;
+  white-space: pre-wrap;
+}
+
+.studio-danmaku-toolbar {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) auto auto;
+}
+
+.studio-danmaku-status {
+  min-width: 10rem;
+  min-height: 2.45rem;
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, auto);
+  column-gap: 0.46rem;
+  row-gap: 0.04rem;
+  align-items: center;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.42rem 0.64rem;
+  background: rgba(255, 255, 255, 0.80);
+}
+
+.studio-danmaku-status span {
+  grid-row: 1 / span 2;
+  width: 0.58rem;
+  height: 0.58rem;
+  border-radius: 999px;
+  background: rgba(32, 43, 70, 0.60);
+  box-shadow: 0 0 0 0.2rem rgba(32, 43, 70, 0.60);
+}
+
+.studio-danmaku-status.ok span {
+  background: rgba(59, 137, 115, 0.95);
+  box-shadow: 0 0 0 0.2rem rgba(59, 137, 115, 0.12);
+}
+
+.studio-danmaku-status.warn span {
+  background: rgba(161, 115, 53, 0.95);
+  box-shadow: 0 0 0 0.2rem rgba(161, 115, 53, 0.1);
+}
+
+.studio-danmaku-status.error span {
+  background: rgba(255, 122, 122, 0.95);
+  box-shadow: 0 0 0 0.2rem rgba(255, 122, 122, 0.1);
+}
+
+.studio-danmaku-status strong,
+.studio-danmaku-status small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-danmaku-status strong {
+  color: rgba(32, 43, 70, 0.92);
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.studio-danmaku-status small {
+  color: rgba(32, 43, 70, 0.60);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.studio-danmaku-grid {
+  grid-template-columns: minmax(19rem, 0.86fr) minmax(23rem, 1.14fr);
+}
+
+.studio-danmaku-settings {
+  grid-row: span 2;
+}
+
+.studio-danmaku-card textarea {
+  width: 100%;
+  min-height: 5.8rem;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.64rem 0.7rem;
+  outline: none;
+  color: rgba(32, 43, 70, 0.94);
+  background: rgba(255, 255, 255, 0.80);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.studio-danmaku-card textarea:focus {
+  border-color: rgba(172, 77, 109, 0.54);
+  box-shadow: 0 0 0 3px rgba(172, 77, 109, 0.10);
+}
+
+.studio-danmaku-switches {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.studio-danmaku-switches .studio-check-row {
+  min-width: 0;
+}
+
+.studio-danmaku-error {
+  margin: 0;
+  border: 1px solid rgba(255, 122, 122, 0.32);
+  border-radius: 12px;
+  padding: 0.62rem 0.7rem;
+  color: rgba(255, 190, 190, 0.92);
+  background: rgba(255, 122, 122, 0.08);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.studio-danmaku-hint {
+  margin: 0;
+  color: var(--studio-text-muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.studio-danmaku-log-card header {
+  justify-content: space-between;
+}
+
+.studio-danmaku-clear {
+  min-height: 2rem;
+  margin-left: auto;
+  padding: 0 0.58rem;
+}
+
+.studio-danmaku-log {
+  max-height: calc(100vh - 14rem);
+  min-height: 18rem;
+  display: grid;
+  align-content: start;
+  gap: 0.48rem;
+  overflow: auto;
+  padding-right: 0.18rem;
+}
+
+.studio-danmaku-message {
+  min-width: 0;
+  display: grid;
+  gap: 0.32rem;
+  border: 1px solid rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  padding: 0.62rem 0.7rem;
+  background: rgba(255, 255, 255, 0.80);
+}
+
+.studio-danmaku-message.superchat {
+  border-color: rgba(161, 115, 53, 0.34);
+  background: rgba(161, 115, 53, 0.08);
+}
+
+.studio-danmaku-message.gift,
+.studio-danmaku-message.guard {
+  border-color: rgba(172, 77, 109, 0.28);
+  background: rgba(172, 77, 109, 0.07);
+}
+
+.studio-danmaku-message header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.46rem;
+  align-items: center;
+}
+
+.studio-danmaku-message strong,
+.studio-danmaku-message span,
+.studio-danmaku-message time,
+.studio-danmaku-message small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-danmaku-message strong {
+  color: rgba(32, 43, 70, 0.94);
+  font-size: 0.82rem;
+}
+
+.studio-danmaku-message span {
+  border: 1px solid rgba(172, 77, 109, 0.20);
+  border-radius: 999px;
+  padding: 0.2rem 0.42rem;
+  color: rgba(172, 77, 109, 0.78);
+  background: rgba(172, 77, 109, 0.10);
+  font-size: 0.64rem;
+  font-weight: 900;
+}
+
+.studio-danmaku-message time,
+.studio-danmaku-message small {
+  color: rgba(32, 43, 70, 0.60);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.studio-danmaku-message p,
+.studio-danmaku-empty {
+  margin: 0;
+  color: rgba(32, 43, 70, 0.72);
+  font-size: 0.78rem;
+  line-height: 1.48;
+}
+
+.studio-danmaku-empty {
+  display: grid;
+  min-height: 8rem;
+  place-items: center;
+  border: 1px dashed rgba(32, 43, 70, 0.60);
+  border-radius: 12px;
+  font-weight: 850;
+}
+
+.studio-scrim-enter-active,
+.studio-scrim-leave-active,
+.studio-settings-drawer-enter-active,
+.studio-settings-drawer-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.studio-scrim-enter-from,
+.studio-scrim-leave-to {
+  opacity: 0;
+}
+
+.studio-settings-drawer-enter-from,
+.studio-settings-drawer-leave-to {
+  opacity: 0;
+  transform: translateX(1rem);
+}
+
+@media (max-width: 720px) {
+  .studio-left-rail {
+    display: none;
+  }
+
+  .studio-music-page {
+    padding: 0.75rem;
+  }
+
+  .studio-music-toolbar,
+  .studio-music-search-form,
+  .studio-music-settings-row,
+  .studio-danmaku-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .studio-music-grid,
+  .studio-music-status-grid,
+  .studio-danmaku-grid,
+  .studio-danmaku-switches {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-danmaku-toolbar {
+    display: flex;
+  }
+
+  .studio-settings-panel {
+    left: 0.75rem;
+    right: 0.75rem;
+    top: 0.75rem;
+    bottom: 0.75rem;
+    width: auto;
+  }
+
+  .studio-settings-section {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-settings-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-memory-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-memory-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-memory-toolbar,
+  .studio-memory-search,
+  .studio-memory-switches,
+  .studio-memory-block-head,
+  .studio-memory-note header,
+  .studio-memory-note footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .studio-memory-grid,
+  .studio-memory-status-grid,
+  .studio-memory-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-memory-toolbar .studio-check-row,
+  .studio-memory-block-head .studio-memory-stats,
+  .studio-memory-stats {
+    margin-left: 0;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .studio-memory-search button,
+  .studio-memory-switches .studio-check-row {
+    width: 100%;
+  }
+
+  .studio-settings-actions button {
+    width: 100%;
+  }
+}
+
+/* Broadcast Stage First shell polish */
+.studio-left-rail {
+  width: 4.45rem;
+  gap: 0.58rem;
+  padding: 0.62rem 0.42rem;
+  border-color: rgba(144, 153, 173, 0.20);
+  background: rgba(255, 255, 255, 0.80);
+  box-shadow: 0 22px 58px rgba(37, 48, 70, 0.12);
+}
+
+.studio-rail-brand {
+  width: 2.78rem;
+  height: 2.78rem;
+  border-color: rgba(172, 77, 109, 0.24);
+  background: rgba(98, 110, 132, 0.055);
+  box-shadow: none;
+}
+
+.studio-rail-brand span {
+  font-size: 1.24rem;
+}
+
+.studio-left-rail nav {
+  gap: 0.42rem;
+}
+
+.studio-rail-item {
+  position: relative;
+  min-height: 3.28rem;
+  border-color: transparent;
+  color: rgba(32, 43, 70, 0.60);
+  background: transparent;
+  font-size: 0;
+}
+
+.studio-rail-item:hover,
+.studio-rail-item.active {
+  border-color: rgba(172, 77, 109, 0.32);
+  color: rgba(32, 43, 70, 0.96);
+  background: rgba(172, 77, 109, 0.10);
+}
+
+.studio-rail-avatar {
+  min-height: 4.1rem;
+  border-color: rgba(98, 110, 132, 0.08);
+  background: rgba(98, 110, 132, 0.035);
+}
+
+.studio-rail-avatar strong,
+.studio-rail-avatar em {
+  display: none;
+}
+
+.studio-rail-item span {
+  position: absolute;
+  left: calc(100% + 0.55rem);
+  top: 50%;
+  max-width: 8rem;
+  border: 1px solid rgba(144, 153, 173, 0.20);
+  border-radius: 12px;
+  padding: 0.32rem 0.48rem;
+  color: rgba(32, 43, 70, 0.92);
+  background: rgba(255, 255, 255, 0.88);
+  font-size: 0.72rem;
+  font-weight: 850;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(-0.25rem);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.studio-rail-item:hover span,
+.studio-rail-item:focus-visible span {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}

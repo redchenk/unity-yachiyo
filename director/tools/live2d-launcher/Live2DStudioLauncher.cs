@@ -1,0 +1,6707 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Threading;
+using System.Windows.Forms;
+using System.Web.Script.Serialization;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
+
+internal static class Live2DStudioLauncher
+{
+    private const int DefaultPort = 3288;
+    private const string Live2DPath = "/live2d-studio/";
+
+    [STAThread]
+    public static int Main(string[] args)
+    {
+        try
+        {
+            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+
+            if (HasArgument(args, "--webview2-probe"))
+            {
+                return RunWebView2Probe(args);
+            }
+
+            var repoRoot = FindRepoRoot(AppDomain.CurrentDomain.BaseDirectory);
+            if (!EnsureBuilt(repoRoot))
+            {
+                MessageBox.Show(
+                    "Missing dist/live2d-studio/index.html and automatic build failed.",
+                    "Yachiyo Live2D Studio",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                return 1;
+            }
+
+            var browserExecutableFolder = ResolveWorkingWebView2BrowserFolder();
+            if (browserExecutableFolder == null)
+            {
+                throw new InvalidOperationException(
+                    "No working Microsoft Edge WebView2 Runtime was found. " +
+                    "The installed Runtime may have been interrupted during an update. " +
+                    "Repair Microsoft Edge WebView2 Runtime and restart Yachiyo Live2D Studio.");
+            }
+            if (!string.IsNullOrWhiteSpace(browserExecutableFolder))
+            {
+                Environment.SetEnvironmentVariable(
+                    "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER",
+                    browserExecutableFolder,
+                    EnvironmentVariableTarget.Process);
+            }
+
+            var preferredPort = ParsePort(args, DefaultPort);
+            var port = FindAvailablePort(preferredPort);
+            using (var server = new LocalStudioServer(repoRoot, port, Live2DPath))
+            {
+                server.Start();
+                using (var monitor = LiveReplyHealthMonitor.Start(repoRoot, port))
+                {
+                    Application.EnableVisualStyles();
+                    Application.SetCompatibleTextRenderingDefault(false);
+                    Application.Run(new StudioWindow(server.Url, repoRoot, browserExecutableFolder));
+                }
+            }
+
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                ex.ToString(),
+                "Yachiyo Live2D Studio",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+            return 1;
+        }
+    }
+
+    private static string FindRepoRoot(string baseDir)
+    {
+        var directory = new DirectoryInfo(baseDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        for (var depth = 0; depth < 8 && directory != null; depth++)
+        {
+            var fullName = directory.FullName;
+            if (Directory.Exists(Path.Combine(fullName, "live2d-studio")) &&
+                Directory.Exists(Path.Combine(fullName, "models")) &&
+                Directory.Exists(Path.Combine(fullName, "lib")))
+            {
+                return fullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        return baseDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    private static int ParsePort(string[] args, int fallback)
+    {
+        for (var i = 0; i < args.Length; i++)
+        {
+            var arg = args[i] ?? string.Empty;
+            if (arg.StartsWith("--port=", StringComparison.OrdinalIgnoreCase))
+            {
+                int value;
+                if (int.TryParse(arg.Substring("--port=".Length), out value))
+                {
+                    return value;
+                }
+            }
+
+            if (string.Equals(arg, "--port", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                int value;
+                if (int.TryParse(args[i + 1], out value))
+                {
+                    return value;
+                }
+            }
+        }
+
+        return fallback;
+    }
+
+    private static int FindAvailablePort(int preferredPort)
+    {
+        for (var port = preferredPort; port < preferredPort + 32 && port <= 65535; port++)
+        {
+            TcpListener probe = null;
+            try
+            {
+                probe = new TcpListener(IPAddress.Loopback, port);
+                probe.Start();
+                return port;
+            }
+            catch (SocketException)
+            {
+                // try next port
+            }
+            finally
+            {
+                if (probe != null)
+                {
+                    probe.Stop();
+                }
+            }
+        }
+
+        throw new InvalidOperationException("Unable to find a free port near " + preferredPort + ".");
+    }
+
+    private static bool EnsureBuilt(string repoRoot)
+    {
+        var builtIndex = Path.Combine(repoRoot, "dist", "live2d-studio", "index.html");
+        if (File.Exists(builtIndex))
+        {
+            return true;
+        }
+
+        var nodeDir = FindNodeDirectory(repoRoot);
+        if (string.IsNullOrEmpty(nodeDir))
+        {
+            return false;
+        }
+
+        var build = new ProcessStartInfo
+        {
+            FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+            Arguments = "/c npm run build:live2d-studio",
+            WorkingDirectory = repoRoot,
+            UseShellExecute = false,
+            CreateNoWindow = false
+        };
+        build.EnvironmentVariables["PATH"] = nodeDir + Path.PathSeparator + build.EnvironmentVariables["PATH"];
+
+        using (var process = Process.Start(build))
+        {
+            process.WaitForExit();
+            if (process.ExitCode != 0)
+            {
+                return false;
+            }
+        }
+
+        return File.Exists(builtIndex);
+    }
+
+    internal static string FindNodeDirectory(string repoRoot)
+    {
+        var candidates = new[]
+        {
+            Path.GetFullPath(Path.Combine(repoRoot, "tools", "node-v22.11.0-win-x64")),
+            Path.GetFullPath(Path.Combine(repoRoot, "..", "tools", "node-v22.11.0-win-x64")),
+            Path.GetFullPath(Path.Combine(repoRoot, "..", ".codex_tmp", "node-v20.19.0-win-x64")),
+            Path.GetFullPath(Path.Combine(repoRoot, "..", ".codex_tmp", "node-v22.11.0-win-x64"))
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(Path.Combine(candidate, "node.exe")) && File.Exists(Path.Combine(candidate, "npm.cmd")))
+            {
+                return candidate;
+            }
+        }
+
+        var pathValue = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        foreach (var pathEntry in pathValue.Split(new[] { Path.PathSeparator }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = pathEntry.Trim('"');
+            if (File.Exists(Path.Combine(trimmed, "node.exe")) && File.Exists(Path.Combine(trimmed, "npm.cmd")))
+            {
+                return trimmed;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    internal static string FindMemoryNodeExecutable(string repoRoot)
+    {
+        var candidates = new List<string>();
+        var pathValue = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        foreach (var pathEntry in pathValue.Split(new[] { Path.PathSeparator }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            candidates.Add(Path.Combine(pathEntry.Trim('"'), "node.exe"));
+        }
+
+        var preferredDirectory = FindNodeDirectory(repoRoot);
+        if (!string.IsNullOrWhiteSpace(preferredDirectory))
+        {
+            candidates.Add(Path.Combine(preferredDirectory, "node.exe"));
+        }
+
+        candidates.Add(Path.GetFullPath(Path.Combine(repoRoot, "tools", "node-v22.11.0-win-x64", "node.exe")));
+        candidates.Add(Path.GetFullPath(Path.Combine(repoRoot, "..", "tools", "node-v22.11.0-win-x64", "node.exe")));
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in candidates)
+        {
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(candidate);
+            }
+            catch
+            {
+                continue;
+            }
+            if (!seen.Add(fullPath) || !File.Exists(fullPath)) continue;
+            if (CanLoadMemoryNativeModule(fullPath, repoRoot)) return fullPath;
+        }
+        return string.Empty;
+    }
+
+    internal static string FindLiveReplyMonitorNodeExecutable(string repoRoot)
+    {
+        return FindMemoryNodeExecutable(repoRoot);
+    }
+
+    private static bool CanLoadMemoryNativeModule(string nodeExe, string repoRoot)
+    {
+        try
+        {
+            var start = new ProcessStartInfo
+            {
+                FileName = nodeExe,
+                Arguments = "-e \"const Database=require('better-sqlite3'); const db=new Database(':memory:'); db.prepare('SELECT 1').get(); db.close()\"",
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            };
+            using (var process = Process.Start(start))
+            {
+                if (!process.WaitForExit(8000))
+                {
+                    try { process.Kill(); } catch { }
+                    return false;
+                }
+                return process.ExitCode == 0;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool HasArgument(string[] args, string expected)
+    {
+        foreach (var arg in args ?? new string[0])
+        {
+            if (string.Equals(arg, expected, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static string GetArgumentValue(string[] args, string name, string fallback)
+    {
+        for (var i = 0; i < (args == null ? 0 : args.Length); i++)
+        {
+            var arg = args[i] ?? string.Empty;
+            var prefix = name + "=";
+            if (arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return arg.Substring(prefix.Length);
+            }
+            if (string.Equals(arg, name, StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                return args[i + 1] ?? fallback;
+            }
+        }
+        return fallback;
+    }
+
+    private static int RunWebView2Probe(string[] args)
+    {
+        var browserFolderValue = GetArgumentValue(args, "--browser-folder", "__DEFAULT__");
+        var browserExecutableFolder = string.Equals(
+            browserFolderValue,
+            "__DEFAULT__",
+            StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : browserFolderValue;
+        var profileFolder = GetArgumentValue(
+            args,
+            "--profile-folder",
+            Path.Combine(Path.GetTempPath(), "YachiyoLive2DStudio", "WebView2Probe", "default"));
+        if (!string.IsNullOrWhiteSpace(browserExecutableFolder))
+        {
+            Environment.SetEnvironmentVariable(
+                "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER",
+                browserExecutableFolder,
+                EnvironmentVariableTarget.Process);
+        }
+
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        using (var probe = new WebView2ProbeWindow(browserExecutableFolder, profileFolder))
+        {
+            Application.Run(probe);
+            return probe.Succeeded ? 0 : 1;
+        }
+    }
+
+    internal static string ResolveWorkingWebView2BrowserFolder()
+    {
+        var candidates = FindWebView2RuntimeCandidates();
+        foreach (var candidate in candidates)
+        {
+            var label = string.IsNullOrWhiteSpace(candidate) ? "default" : candidate;
+            var passed = ProbeWebView2Runtime(candidate);
+            LogLauncherEvent("WebView2 probe " + (passed ? "passed: " : "failed: ") + label);
+            if (!passed) continue;
+            CacheWorkingWebView2Runtime(candidate);
+            return candidate;
+        }
+        LogLauncherEvent("No WebView2 Runtime candidate passed the startup probe.");
+        return null;
+    }
+
+    private static List<string> FindWebView2RuntimeCandidates()
+    {
+        var candidates = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var cached = ReadCachedWebView2Runtime();
+        if (IsWebView2RuntimeFolder(cached) && seen.Add(cached))
+        {
+            candidates.Add(cached);
+        }
+
+        var privateCandidates = FindPrivateWebView2RuntimeCandidates();
+        foreach (var candidate in privateCandidates)
+        {
+            if (seen.Add(candidate))
+            {
+                candidates.Add(candidate);
+            }
+        }
+
+        var roots = new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Microsoft", "EdgeWebView", "Application"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft", "EdgeWebView", "Application"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "EdgeWebView", "Application")
+        };
+        var discovered = new List<string>();
+        foreach (var root in roots)
+        {
+            if (!Directory.Exists(root)) continue;
+            try
+            {
+                foreach (var directory in Directory.GetDirectories(root))
+                {
+                    if (IsWebView2RuntimeFolder(directory) && seen.Add(directory))
+                    {
+                        discovered.Add(directory);
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
+        discovered.Sort(CompareWebView2RuntimeFoldersDescending);
+        candidates.AddRange(discovered);
+        candidates.Add(string.Empty);
+        return candidates;
+    }
+
+    private static List<string> FindPrivateWebView2RuntimeCandidates()
+    {
+        var discovered = new List<string>();
+        var root = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "YachiyoLive2DStudio",
+            "WebView2Runtime");
+        if (!Directory.Exists(root)) return discovered;
+
+        try
+        {
+            if (IsWebView2RuntimeFolder(root))
+            {
+                discovered.Add(root);
+            }
+            foreach (var directory in Directory.GetDirectories(root))
+            {
+                if (IsWebView2RuntimeFolder(directory))
+                {
+                    discovered.Add(directory);
+                }
+            }
+        }
+        catch
+        {
+        }
+        discovered.Sort(CompareWebView2RuntimeFoldersDescending);
+        return discovered;
+    }
+
+    private static int CompareWebView2RuntimeFoldersDescending(string left, string right)
+    {
+        Version leftVersion;
+        Version rightVersion;
+        var leftParsed = Version.TryParse(Path.GetFileName(left), out leftVersion);
+        var rightParsed = Version.TryParse(Path.GetFileName(right), out rightVersion);
+        if (leftParsed && rightParsed) return rightVersion.CompareTo(leftVersion);
+        if (leftParsed) return -1;
+        if (rightParsed) return 1;
+        return string.Compare(right, left, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsWebView2RuntimeFolder(string path)
+    {
+        return !string.IsNullOrWhiteSpace(path) &&
+               File.Exists(Path.Combine(path, "msedgewebview2.exe"));
+    }
+
+    private static bool ProbeWebView2Runtime(string browserExecutableFolder)
+    {
+        try
+        {
+            var runtimeName = string.IsNullOrWhiteSpace(browserExecutableFolder)
+                ? "default"
+                : Path.GetFileName(browserExecutableFolder);
+            var safeRuntimeName = SanitizePathSegment(runtimeName);
+            var profileFolder = Path.Combine(
+                Path.GetTempPath(),
+                "YachiyoLive2DStudio",
+                "WebView2Probe",
+                safeRuntimeName);
+            Directory.CreateDirectory(profileFolder);
+            var browserValue = string.IsNullOrWhiteSpace(browserExecutableFolder)
+                ? "__DEFAULT__"
+                : browserExecutableFolder;
+            var start = new ProcessStartInfo
+            {
+                FileName = Application.ExecutablePath,
+                Arguments = "--webview2-probe --browser-folder " + QuoteArgument(browserValue) +
+                            " --profile-folder " + QuoteArgument(profileFolder),
+                WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            if (!string.IsNullOrWhiteSpace(browserExecutableFolder))
+            {
+                start.EnvironmentVariables["WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"] = browserExecutableFolder;
+            }
+            using (var process = Process.Start(start))
+            {
+                if (!process.WaitForExit(12000))
+                {
+                    try { process.Kill(); } catch { }
+                    return false;
+                }
+                return process.ExitCode == 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            LogLauncherEvent("WebView2 probe exception: " + ex.GetType().Name + ": " + ex.Message);
+            return false;
+        }
+    }
+
+    private static string SanitizePathSegment(string value)
+    {
+        var builder = new StringBuilder();
+        foreach (var character in value ?? string.Empty)
+        {
+            builder.Append(Array.IndexOf(Path.GetInvalidFileNameChars(), character) >= 0 ? '_' : character);
+        }
+        return builder.Length > 0 ? builder.ToString() : "default";
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        return "\"" + (value ?? string.Empty).Replace("\"", "\\\"") + "\"";
+    }
+
+    private static string WebView2RuntimeCachePath()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "YachiyoLive2DStudio",
+            "working-webview2-runtime.txt");
+    }
+
+    private static string ReadCachedWebView2Runtime()
+    {
+        try
+        {
+            var path = WebView2RuntimeCachePath();
+            return File.Exists(path) ? File.ReadAllText(path).Trim() : string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static void CacheWorkingWebView2Runtime(string browserExecutableFolder)
+    {
+        if (string.IsNullOrWhiteSpace(browserExecutableFolder)) return;
+        try
+        {
+            var path = WebView2RuntimeCachePath();
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            File.WriteAllText(path, browserExecutableFolder);
+        }
+        catch
+        {
+        }
+    }
+
+    internal static void LogLauncherEvent(string message)
+    {
+        try
+        {
+            var directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "YachiyoLive2DStudio");
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(
+                Path.Combine(directory, "launcher.log"),
+                DateTimeOffset.Now.ToString("O") + " " + message + Environment.NewLine);
+        }
+        catch
+        {
+        }
+    }
+}
+
+internal sealed class LiveReplyHealthMonitor : IDisposable
+{
+    private readonly Process process;
+    private readonly string stopFile;
+    private bool disposed;
+
+    private LiveReplyHealthMonitor(Process process, string stopFile)
+    {
+        this.process = process;
+        this.stopFile = stopFile ?? string.Empty;
+    }
+
+    public static LiveReplyHealthMonitor Start(string repoRoot, int appPort)
+    {
+        Process child = null;
+        string signalPath = string.Empty;
+        try
+        {
+            var scriptPath = Path.Combine(repoRoot, "tools", "live2d-studio", "monitor-live-reply-health.mjs");
+            if (!File.Exists(scriptPath))
+            {
+                Trace.TraceWarning("Live reply monitor script is missing: " + scriptPath);
+                return new LiveReplyHealthMonitor(null, string.Empty);
+            }
+            var nodeExe = Live2DStudioLauncher.FindLiveReplyMonitorNodeExecutable(repoRoot);
+            if (string.IsNullOrWhiteSpace(nodeExe) || !File.Exists(nodeExe))
+            {
+                Trace.TraceWarning("A compatible Node.js runtime for the live reply monitor was not found.");
+                return new LiveReplyHealthMonitor(null, string.Empty);
+            }
+            var outputDirectory = Path.Combine(repoRoot, "output");
+            Directory.CreateDirectory(outputDirectory);
+            signalPath = Path.Combine(
+                outputDirectory,
+                "live-reply-monitor-" + Process.GetCurrentProcess().Id + ".stop");
+            if (File.Exists(signalPath)) File.Delete(signalPath);
+
+            var start = new ProcessStartInfo
+            {
+                FileName = nodeExe,
+                Arguments = Quote(scriptPath) +
+                    " --app-port " + Math.Max(1, Math.Min(65535, appPort)) +
+                    " --parent-pid " + Process.GetCurrentProcess().Id +
+                    " --stop-file " + Quote(signalPath) +
+                    " --startup-grace-ms 90000 --quiet",
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            child = new Process { StartInfo = start, EnableRaisingEvents = true };
+            if (!child.Start())
+            {
+                child.Dispose();
+                return new LiveReplyHealthMonitor(null, signalPath);
+            }
+            return new LiveReplyHealthMonitor(child, signalPath);
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceWarning("Live reply monitor failed to start: " + ex.Message);
+            if (child != null) child.Dispose();
+            return new LiveReplyHealthMonitor(null, signalPath);
+        }
+    }
+
+    private static string Quote(string value)
+    {
+        return "\"" + (value ?? string.Empty).Replace("\"", "\\\"") + "\"";
+    }
+
+    public void Dispose()
+    {
+        if (disposed) return;
+        disposed = true;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(stopFile))
+            {
+                File.WriteAllText(stopFile, "stop", Encoding.UTF8);
+            }
+            if (process != null && !process.HasExited && !process.WaitForExit(8000))
+            {
+                try { process.Kill(); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceWarning("Live reply monitor failed to stop cleanly: " + ex.Message);
+            if (process != null)
+            {
+                try { if (!process.HasExited) process.Kill(); } catch { }
+            }
+        }
+        finally
+        {
+            if (process != null) process.Dispose();
+            if (!string.IsNullOrWhiteSpace(stopFile) && File.Exists(stopFile))
+            {
+                try { File.Delete(stopFile); } catch { }
+            }
+        }
+    }
+}
+
+internal sealed class WebView2ProbeWindow : Form
+{
+    private readonly WebView2 webView;
+
+    public WebView2ProbeWindow(string browserExecutableFolder, string profileFolder)
+    {
+        ShowInTaskbar = false;
+        FormBorderStyle = FormBorderStyle.FixedToolWindow;
+        WindowState = FormWindowState.Minimized;
+        Opacity = 0;
+        webView = new WebView2
+        {
+            Dock = DockStyle.Fill,
+            CreationProperties = new CoreWebView2CreationProperties
+            {
+                BrowserExecutableFolder = browserExecutableFolder,
+                UserDataFolder = profileFolder
+            }
+        };
+        Controls.Add(webView);
+        Shown += OnShown;
+    }
+
+    public bool Succeeded { get; private set; }
+
+    private async void OnShown(object sender, EventArgs e)
+    {
+        try
+        {
+            await webView.EnsureCoreWebView2Async(null);
+            Succeeded = webView.CoreWebView2 != null;
+        }
+        catch
+        {
+            Succeeded = false;
+        }
+        finally
+        {
+            Close();
+        }
+    }
+}
+
+internal sealed class StudioWindow : Form
+{
+    private readonly string url;
+    private readonly string repoRoot;
+    private readonly string browserExecutableFolder;
+    private readonly WebView2 webView;
+    private readonly Label errorLabel;
+
+    public StudioWindow(string url, string repoRoot, string browserExecutableFolder)
+    {
+        this.url = url;
+        this.repoRoot = repoRoot;
+        this.browserExecutableFolder = browserExecutableFolder;
+
+        Text = "Yachiyo Live2D Studio";
+        StartPosition = FormStartPosition.CenterScreen;
+        ClientSize = new Size(1280, 720);
+        MinimumSize = SizeFromClientSize(new Size(960, 540));
+        BackColor = Color.FromArgb(8, 10, 18);
+
+        var iconPath = Path.Combine(repoRoot, "favicon.ico");
+        if (File.Exists(iconPath))
+        {
+            Icon = new Icon(iconPath);
+        }
+
+        errorLabel = new Label
+        {
+            Dock = DockStyle.Fill,
+            ForeColor = Color.White,
+            BackColor = Color.FromArgb(8, 10, 18),
+            TextAlign = ContentAlignment.MiddleCenter,
+            Font = new Font("Segoe UI", 10),
+            Visible = false
+        };
+
+        webView = new WebView2
+        {
+            Dock = DockStyle.Fill,
+            CreationProperties = new CoreWebView2CreationProperties
+            {
+                BrowserExecutableFolder = browserExecutableFolder,
+                UserDataFolder = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "YachiyoLive2DStudio",
+                    "WebView2")
+            }
+        };
+
+        Controls.Add(webView);
+        Controls.Add(errorLabel);
+
+        Shown += OnShown;
+    }
+
+    private async void OnShown(object sender, EventArgs e)
+    {
+        try
+        {
+            await webView.EnsureCoreWebView2Async(null);
+            webView.CoreWebView2.Settings.AreDevToolsEnabled = true;
+            webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
+            webView.CoreWebView2.Navigate(url);
+        }
+        catch (Exception ex)
+        {
+            Live2DStudioLauncher.LogLauncherEvent(
+                "WebView2 startup failed for runtime " +
+                (string.IsNullOrWhiteSpace(browserExecutableFolder) ? "default" : browserExecutableFolder) +
+                ": 0x" + ex.HResult.ToString("X8") + " " + ex.GetType().Name + ": " + ex.Message);
+            webView.Visible = false;
+            errorLabel.Text =
+                "WebView2 failed to start after runtime health checks.\r\n\r\n" +
+                ex.Message + "\r\n\r\n" +
+                "Diagnostic log: " + Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "YachiyoLive2DStudio",
+                    "launcher.log");
+            errorLabel.Visible = true;
+        }
+    }
+}
+
+internal sealed class LocalStudioServer : IDisposable
+{
+    private readonly string repoRoot;
+    private readonly int port;
+    private readonly string live2DPath;
+    private readonly CancellationTokenSource shutdown = new CancellationTokenSource();
+    private TcpListener listener;
+    private Thread worker;
+
+    public LocalStudioServer(string repoRoot, int port, string live2DPath)
+    {
+        this.repoRoot = repoRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        this.port = port;
+        this.live2DPath = live2DPath;
+        DesktopApiProxy.Configure(this.repoRoot);
+    }
+
+    public string Url
+    {
+        get { return "http://127.0.0.1:" + port + live2DPath; }
+    }
+
+    public void Start()
+    {
+        listener = new TcpListener(IPAddress.Loopback, port);
+        listener.Start();
+        worker = new Thread(RunServer)
+        {
+            IsBackground = true,
+            Name = "Yachiyo Live2D static server"
+        };
+        worker.Start();
+        DesktopApiProxy.WarmupManagedMemoryStack();
+        DesktopApiProxy.WarmupManagedNeteaseMusicApi();
+    }
+
+    public void Dispose()
+    {
+        shutdown.Cancel();
+        DesktopApiProxy.ShutdownNeteaseMusicApiService();
+        DesktopApiProxy.ShutdownMinecraftAgentService();
+        DesktopApiProxy.ShutdownMemoryDataService();
+        DesktopApiProxy.ShutdownAsrService();
+        var current = listener;
+        listener = null;
+        if (current != null)
+        {
+            try { current.Stop(); }
+            catch { }
+        }
+    }
+
+    private void RunServer()
+    {
+        while (!shutdown.IsCancellationRequested)
+        {
+            TcpClient client = null;
+            try
+            {
+                client = listener.AcceptTcpClient();
+            }
+            catch (SocketException)
+            {
+                if (shutdown.IsCancellationRequested) break;
+            }
+            catch (ObjectDisposedException)
+            {
+                break;
+            }
+
+            if (client != null)
+            {
+                ThreadPool.QueueUserWorkItem(_ => HandleClientSafely(client));
+            }
+        }
+    }
+
+    private void HandleClientSafely(TcpClient client)
+    {
+        try
+        {
+            HandleClient(client);
+        }
+        catch (IOException)
+        {
+            // Browsers routinely cancel navigation, SSE, and media requests while the server is writing.
+        }
+        catch (SocketException)
+        {
+            // A reset connection is isolated to this client and must never terminate the desktop app.
+        }
+        catch (ObjectDisposedException)
+        {
+            // Expected when the app closes while a request is still in flight.
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceError("Local Studio request failed: " + ex);
+        }
+    }
+
+    private void HandleClient(TcpClient client)
+    {
+        using (client)
+        using (var stream = client.GetStream())
+        {
+            var request = ReadRequest(stream);
+            if (request == null)
+            {
+                return;
+            }
+
+            var method = request.Method.ToUpperInvariant();
+            var path = request.Path;
+            var query = string.Empty;
+            var queryIndex = path.IndexOf('?');
+            if (queryIndex >= 0)
+            {
+                query = path.Substring(queryIndex + 1);
+                path = path.Substring(0, queryIndex);
+            }
+            path = Uri.UnescapeDataString(path);
+
+            if (method == "POST" && string.Equals(path, "/api/chat", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.Chat(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/chat/stream", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteChatStreamResponse(stream, request.Body);
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/live-reply/telemetry", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.LiveReplyTelemetry(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/tts", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.Tts(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/asr", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.Asr(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/vision/context", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.VisionContext(request.Body));
+                return;
+            }
+
+            if (method == "POST" && (
+                string.Equals(path, "/api/minecraft/status", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/minecraft/task", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/minecraft/configure", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/minecraft/action", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/minecraft/disconnect", StringComparison.OrdinalIgnoreCase)))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MinecraftAgentRoute(path, request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/bilibili/connect-info", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.BilibiliConnectInfo(request.Body));
+                return;
+            }
+
+            if ((method == "GET" || method == "HEAD") && string.Equals(path, "/api/live2d/items", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.Live2DItems());
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/live2d/items/import", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.Live2DItemsImport(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/live2d/items/manifest", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.Live2DItemsManifest(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/local/search", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.LocalMusicSearch(request.Body));
+                return;
+            }
+
+            if ((method == "GET" || method == "HEAD") && string.Equals(path, "/api/music/local/file", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.LocalMusicFile(query));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/netease/search", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicSearch(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/netease/resolve", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicResolve(request.Body));
+                return;
+            }
+
+            if ((method == "GET" || method == "HEAD") && string.Equals(path, "/api/music/netease/stream", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicStream(query));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/netease/managed/status", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicManagedStatus(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/netease/account", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicAccount(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/netease/login/qr/create", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicQrCreate(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/netease/login/qr/check", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicQrCheck(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/music/netease/logout", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.NeteaseMusicLogout());
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/memory/search", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemorySearch(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/memory/write", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemoryWrite(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/memory/init", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemoryInit(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/memory/reindex", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemoryReindex(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/memory/list", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemoryList(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/memory/disable", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemoryDisable(request.Body));
+                return;
+            }
+
+            if (method == "POST" && string.Equals(path, "/api/memory/delete", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemoryDelete(request.Body));
+                return;
+            }
+
+            if (method == "POST" && (
+                string.Equals(path, "/api/memory/record-turn", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/memory/consolidate", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/memory/managed-milvus/start", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/memory/profile", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/memory/traces", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/memory/anchors", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/memory/gc", StringComparison.OrdinalIgnoreCase)))
+            {
+                WriteApiResponse(stream, DesktopApiProxy.MemoryDataRoute(path, request.Body));
+                return;
+            }
+
+            if (method != "GET" && method != "HEAD")
+            {
+                WritePlainResponse(stream, 405, "Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed", false);
+                return;
+            }
+
+            if (path == "/" || string.IsNullOrEmpty(path))
+            {
+                WriteRedirect(stream, live2DPath);
+                return;
+            }
+
+            if (string.Equals(path, "/live2d-studio", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteRedirect(stream, live2DPath);
+                return;
+            }
+
+            var physicalPath = ResolvePhysicalPath(path);
+            if (physicalPath == null)
+            {
+                WritePlainResponse(stream, 404, "Not Found", "text/plain; charset=utf-8", "Not Found", false);
+                return;
+            }
+
+            if (!File.Exists(physicalPath))
+            {
+                if (IsLive2DRoute(path))
+                {
+                    physicalPath = Path.Combine(repoRoot, "dist", "live2d-studio", "index.html");
+                }
+                else if (Directory.Exists(physicalPath))
+                {
+                    var directoryIndex = Path.Combine(physicalPath, "index.html");
+                    if (File.Exists(directoryIndex))
+                    {
+                        physicalPath = directoryIndex;
+                    }
+                }
+            }
+
+            if (!File.Exists(physicalPath))
+            {
+                WritePlainResponse(stream, 404, "Not Found", "text/plain; charset=utf-8", "Not Found", false);
+                return;
+            }
+
+            WriteFileResponse(stream, physicalPath, method == "HEAD");
+        }
+    }
+
+    private static StudioRequest ReadRequest(NetworkStream stream)
+    {
+        var headerBytes = new MemoryStream();
+        var buffer = new byte[8192];
+        var headerEnd = -1;
+        var maxHeaderBytes = 65536;
+
+        while (headerEnd < 0 && headerBytes.Length < maxHeaderBytes)
+        {
+            var read = stream.Read(buffer, 0, buffer.Length);
+            if (read <= 0)
+            {
+                return null;
+            }
+            headerBytes.Write(buffer, 0, read);
+            headerEnd = FindHeaderEnd(headerBytes.GetBuffer(), (int)headerBytes.Length);
+        }
+
+        if (headerEnd < 0)
+        {
+            return null;
+        }
+
+        var allBytes = headerBytes.ToArray();
+        var headerText = Encoding.ASCII.GetString(allBytes, 0, headerEnd);
+        var lines = headerText.Split(new[] { "\r\n" }, StringSplitOptions.None);
+        if (lines.Length == 0)
+        {
+            return null;
+        }
+
+        var firstLine = lines[0].Split(' ');
+        if (firstLine.Length < 2)
+        {
+            return null;
+        }
+
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 1; i < lines.Length; i++)
+        {
+            var separator = lines[i].IndexOf(':');
+            if (separator <= 0) continue;
+            headers[lines[i].Substring(0, separator).Trim()] = lines[i].Substring(separator + 1).Trim();
+        }
+
+        var contentLength = 0;
+        int.TryParse(headers.ContainsKey("Content-Length") ? headers["Content-Length"] : "0", out contentLength);
+        if (contentLength < 0 || contentLength > 16 * 1024 * 1024)
+        {
+            return null;
+        }
+
+        var body = new byte[contentLength];
+        var bodyOffset = headerEnd + 4;
+        var alreadyRead = Math.Min(contentLength, Math.Max(0, allBytes.Length - bodyOffset));
+        if (alreadyRead > 0)
+        {
+            Buffer.BlockCopy(allBytes, bodyOffset, body, 0, alreadyRead);
+        }
+
+        while (alreadyRead < contentLength)
+        {
+            var read = stream.Read(body, alreadyRead, contentLength - alreadyRead);
+            if (read <= 0) break;
+            alreadyRead += read;
+        }
+
+        return new StudioRequest
+        {
+            Method = firstLine[0].Trim(),
+            Path = firstLine[1].Trim(),
+            Headers = headers,
+            Body = body
+        };
+    }
+
+    private static int FindHeaderEnd(byte[] bytes, int length)
+    {
+        for (var i = 3; i < length; i++)
+        {
+            if (bytes[i - 3] == 13 && bytes[i - 2] == 10 && bytes[i - 1] == 13 && bytes[i] == 10)
+            {
+                return i - 3;
+            }
+        }
+
+        return -1;
+    }
+
+    private bool IsLive2DRoute(string path)
+    {
+        return path.StartsWith("/live2d-studio/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string ResolvePhysicalPath(string requestPath)
+    {
+        var safePath = requestPath.TrimStart('/');
+        if (safePath.StartsWith("live2d-studio/", StringComparison.OrdinalIgnoreCase))
+        {
+            safePath = "dist/" + safePath;
+        }
+
+        var combined = Path.GetFullPath(Path.Combine(repoRoot, safePath.Replace('/', Path.DirectorySeparatorChar)));
+        if (!combined.StartsWith(repoRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(combined, repoRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return combined;
+    }
+
+    private static void WriteRedirect(NetworkStream stream, string location)
+    {
+        var headers = new StringBuilder();
+        headers.Append("HTTP/1.1 302 Found\r\n");
+        headers.Append("Location: ").Append(location).Append("\r\n");
+        headers.Append("Cache-Control: no-store\r\n");
+        headers.Append("Connection: close\r\n\r\n");
+        WriteBytes(stream, Encoding.ASCII.GetBytes(headers.ToString()));
+    }
+
+    private static void WriteFileResponse(NetworkStream stream, string filePath, bool headOnly)
+    {
+        var bytes = File.ReadAllBytes(filePath);
+        var headers = new StringBuilder();
+        headers.Append("HTTP/1.1 200 OK\r\n");
+        headers.Append("Content-Type: ").Append(GetContentType(filePath)).Append("\r\n");
+        headers.Append("Content-Length: ").Append(bytes.Length).Append("\r\n");
+        headers.Append("Cache-Control: ").Append(GetCacheControl(filePath)).Append("\r\n");
+        headers.Append("Connection: close\r\n\r\n");
+
+        WriteBytes(stream, Encoding.ASCII.GetBytes(headers.ToString()));
+        if (!headOnly)
+        {
+            WriteBytes(stream, bytes);
+        }
+    }
+
+    private static void WriteApiResponse(NetworkStream stream, StudioApiResponse response)
+    {
+        var body = response.Body ?? new byte[0];
+        var headers = new StringBuilder();
+        headers.Append("HTTP/1.1 ").Append(response.StatusCode).Append(' ').Append(response.StatusText).Append("\r\n");
+        headers.Append("Content-Type: ").Append(response.ContentType).Append("\r\n");
+        headers.Append("Content-Length: ").Append(body.Length).Append("\r\n");
+        headers.Append("Cache-Control: no-store\r\n");
+        headers.Append("Connection: close\r\n\r\n");
+        WriteBytes(stream, Encoding.ASCII.GetBytes(headers.ToString()));
+        WriteBytes(stream, body);
+    }
+
+    private static void WriteChatStreamResponse(NetworkStream stream, byte[] body)
+    {
+        var headers = new StringBuilder();
+        headers.Append("HTTP/1.1 200 OK\r\n");
+        headers.Append("Content-Type: text/event-stream; charset=utf-8\r\n");
+        headers.Append("Cache-Control: no-store\r\n");
+        headers.Append("Connection: close\r\n\r\n");
+        WriteBytes(stream, Encoding.ASCII.GetBytes(headers.ToString()));
+        DesktopApiProxy.ChatStream(body, bytes => WriteBytes(stream, bytes));
+    }
+
+    private static void WritePlainResponse(NetworkStream stream, int statusCode, string statusText, string contentType, string body, bool headOnly)
+    {
+        var payload = Encoding.UTF8.GetBytes(body ?? string.Empty);
+        var headers = new StringBuilder();
+        headers.Append("HTTP/1.1 ").Append(statusCode).Append(' ').Append(statusText).Append("\r\n");
+        headers.Append("Content-Type: ").Append(contentType).Append("\r\n");
+        headers.Append("Content-Length: ").Append(payload.Length).Append("\r\n");
+        headers.Append("Cache-Control: no-store\r\n");
+        headers.Append("Connection: close\r\n\r\n");
+        WriteBytes(stream, Encoding.ASCII.GetBytes(headers.ToString()));
+        if (!headOnly)
+        {
+            WriteBytes(stream, payload);
+        }
+    }
+
+    private static void WriteBytes(NetworkStream stream, byte[] bytes)
+    {
+        stream.Write(bytes, 0, bytes.Length);
+        stream.Flush();
+    }
+
+    private static string GetContentType(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        switch (extension)
+        {
+            case ".html":
+            case ".htm":
+                return "text/html; charset=utf-8";
+            case ".js":
+            case ".mjs":
+                return "application/javascript; charset=utf-8";
+            case ".css":
+                return "text/css; charset=utf-8";
+            case ".json":
+                return "application/json; charset=utf-8";
+            case ".svg":
+                return "image/svg+xml";
+            case ".png":
+                return "image/png";
+            case ".jpg":
+            case ".jpeg":
+                return "image/jpeg";
+            case ".gif":
+                return "image/gif";
+            case ".webp":
+                return "image/webp";
+            case ".avif":
+                return "image/avif";
+            case ".ico":
+                return "image/x-icon";
+            case ".mp3":
+                return "audio/mpeg";
+            case ".m4a":
+                return "audio/mp4";
+            case ".aac":
+                return "audio/aac";
+            case ".wav":
+                return "audio/wav";
+            case ".flac":
+                return "audio/flac";
+            case ".ogg":
+            case ".oga":
+                return "audio/ogg";
+            case ".opus":
+                return "audio/opus";
+            case ".woff":
+                return "font/woff";
+            case ".woff2":
+                return "font/woff2";
+            case ".moc3":
+            case ".bin":
+                return "application/octet-stream";
+            default:
+                return "application/octet-stream";
+        }
+    }
+
+    private static string GetCacheControl(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        switch (extension)
+        {
+            case ".html":
+            case ".js":
+            case ".json":
+            case ".moc3":
+            case ".png":
+            case ".jpg":
+            case ".jpeg":
+            case ".webp":
+            case ".gif":
+            case ".avif":
+            case ".svg":
+                return "no-store";
+            default:
+                return "public, max-age=3600";
+        }
+    }
+}
+
+internal sealed class StudioRequest
+{
+    public string Method;
+    public string Path;
+    public Dictionary<string, string> Headers;
+    public byte[] Body;
+}
+
+internal sealed class StudioApiResponse
+{
+    public int StatusCode;
+    public string StatusText;
+    public string ContentType;
+    public byte[] Body;
+}
+
+internal sealed class BilibiliApiException : InvalidOperationException
+{
+    public int Code { get; private set; }
+
+    public BilibiliApiException(int code, string message)
+        : base(message)
+    {
+        Code = code;
+    }
+}
+
+internal static class DesktopApiProxy
+{
+    private static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+    private static string repoRoot = string.Empty;
+    private const int MaxMemoryNoteBytes = 256 * 1024;
+    private const int MaxMemoryWriteChars = 2000;
+    private const int MaxMemorySearchFiles = 800;
+    private const int DefaultLocalMusicSearchLimit = 25;
+    private const int DefaultLocalMusicMaxScanFiles = 3000;
+    private const int NeteaseMusicApiLogicalPort = 3302;
+    private const string DefaultNeteaseMusicApiUrl = "http://127.0.0.1:3302";
+    private const string DefaultNeteaseMusicQualityLevel = "exhigh";
+    private const int DefaultNeteaseMusicBitrate = 320000;
+    private const int NeteaseMusicStreamTicketTtlSeconds = 1800;
+    private const int NeteaseMusicApiRequestTimeoutMs = 8000;
+    private const int NeteaseMusicResolveRequestTimeoutMs = 4500;
+    private const int ChatRequestTimeoutMs = 45000;
+    private const int ChatStreamReadWriteTimeoutMs = 20000;
+    private const string NeteaseMusicAccountRelativePath = "YachiyoLive2DStudio\\music\\netease-account.dat";
+    private const string NeteaseMusicAccountEntropy = "YachiyoLive2DStudio.NetEase.Account.v1";
+    private const string MemoryIndexRelativePath = ".yachiyo-index/memory-index.json";
+    private const string DisabledMemoryRelativePath = ".yachiyo-index/disabled-memory.json";
+    private const int MemoryDataServicePort = 3299;
+    private const int AsrServicePort = 3301;
+    private const int MinecraftAgentServicePort = 3303;
+    private static readonly object MemoryDataServiceLock = new object();
+    private static readonly object AsrServiceLock = new object();
+    private static readonly object NeteaseMusicApiServiceLock = new object();
+    private static readonly object MinecraftAgentServiceLock = new object();
+    private static readonly object LiveReplyTelemetryLock = new object();
+    private static readonly HashSet<string> LiveReplyTelemetryAllowedStages = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "audience-arrived", "selected", "llm-start", "first-sentence", "caption-ready",
+        "tts-queued", "tts-start", "tts-end", "tts-fail", "recovery",
+        "repetition-suppressed", "director-start", "director-stop"
+    };
+    private static Process memoryDataServiceProcess;
+    private static Process asrServiceProcess;
+    private static Process neteaseMusicApiServiceProcess;
+    private static Process minecraftAgentServiceProcess;
+    private static int neteaseMusicApiServicePort;
+    private static readonly object NeteaseMusicTicketLock = new object();
+    private static readonly Dictionary<string, NeteaseMusicStreamTicket> NeteaseMusicStreamTickets =
+        new Dictionary<string, NeteaseMusicStreamTicket>(StringComparer.OrdinalIgnoreCase);
+    private const int DefaultVisionCropSize = 768;
+    private const int MaxVisionCropSize = 1400;
+    private const uint GA_ROOT = 2;
+    private static readonly string[] LocalMusicPathSeparators = new[] { "\r\n", "\n", "\r", ";" };
+    private static readonly string[] Live2DImageItemExtensions = new[] { ".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif", ".svg" };
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out NativePoint point);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr WindowFromPoint(NativePoint point);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, StringBuilder className, int maxCount);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out NativeRect rect);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    public static void Configure(string root)
+    {
+        repoRoot = string.IsNullOrWhiteSpace(root)
+            ? string.Empty
+            : Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    public static void ShutdownMemoryDataService()
+    {
+        lock (MemoryDataServiceLock)
+        {
+            var process = memoryDataServiceProcess;
+            memoryDataServiceProcess = null;
+            if (process != null)
+            {
+                TryRequestMemoryDataServiceShutdown();
+            }
+            if (process == null) return;
+            try
+            {
+                if (!process.HasExited && !process.WaitForExit(20000)) process.Kill();
+            }
+            catch
+            {
+                // Best-effort cleanup for the optional memory sidecar.
+            }
+        }
+    }
+
+    public static void WarmupManagedMemoryStack()
+    {
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            try
+            {
+                EnsureMemoryDataServiceStarted();
+            }
+            catch
+            {
+                // Memory is optional; startup failures are surfaced by Memory settings/actions.
+            }
+        });
+    }
+
+    public static void ShutdownAsrService()
+    {
+        lock (AsrServiceLock)
+        {
+            var process = asrServiceProcess;
+            asrServiceProcess = null;
+            if (process == null) return;
+            try
+            {
+                if (!process.HasExited) process.Kill();
+            }
+            catch
+            {
+                // Best-effort cleanup for the optional ASR sidecar.
+            }
+        }
+    }
+
+    public static void WarmupManagedNeteaseMusicApi()
+    {
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            try
+            {
+                EnsureNeteaseMusicApiServiceStarted();
+            }
+            catch
+            {
+                // Music is optional; startup failures are surfaced by music search/play requests.
+            }
+        });
+    }
+
+    public static void ShutdownNeteaseMusicApiService()
+    {
+        lock (NeteaseMusicApiServiceLock)
+        {
+            var process = neteaseMusicApiServiceProcess;
+            neteaseMusicApiServiceProcess = null;
+            neteaseMusicApiServicePort = 0;
+            if (process == null) return;
+            try
+            {
+                if (!process.HasExited && !process.WaitForExit(2500)) process.Kill();
+            }
+            catch
+            {
+                // Best-effort cleanup for the optional NetEase Cloud Music sidecar.
+            }
+        }
+    }
+
+    public static void ShutdownMinecraftAgentService()
+    {
+        lock (MinecraftAgentServiceLock)
+        {
+            var process = minecraftAgentServiceProcess;
+            minecraftAgentServiceProcess = null;
+            try
+            {
+                if (process == null && ProbeMinecraftAgentService())
+                {
+                    try
+                    {
+                        PostBytes(
+                            "http://127.0.0.1:" + MinecraftAgentServicePort + "/api/minecraft/shutdown",
+                            "{}",
+                            new Dictionary<string, string>(),
+                            1200
+                        );
+                    }
+                    catch { }
+                    return;
+                }
+                if (process == null) return;
+                if (!process.HasExited)
+                {
+                    try
+                    {
+                        PostBytes(
+                            "http://127.0.0.1:" + MinecraftAgentServicePort + "/api/minecraft/shutdown",
+                            "{}",
+                            new Dictionary<string, string>(),
+                            1200
+                        );
+                    }
+                    catch { }
+                    if (!process.WaitForExit(2500)) process.Kill();
+                }
+            }
+            catch
+            {
+                // Best-effort cleanup for the optional Minecraft sidecar.
+            }
+        }
+    }
+
+    public static StudioApiResponse MinecraftAgentRoute(string route, byte[] body)
+    {
+        try
+        {
+            EnsureMinecraftAgentServiceStarted();
+            var response = PostBytes(
+                "http://127.0.0.1:" + MinecraftAgentServicePort + route,
+                Encoding.UTF8.GetString(body ?? new byte[0]),
+                new Dictionary<string, string>(),
+                12000
+            );
+            return new StudioApiResponse
+            {
+                StatusCode = string.Equals(route, "/api/minecraft/action", StringComparison.OrdinalIgnoreCase) ? 202 : 200,
+                StatusText = "OK",
+                ContentType = string.IsNullOrWhiteSpace(response.ContentType) ? "application/json; charset=utf-8" : response.ContentType,
+                Body = response.Body
+            };
+        }
+        catch (WebException ex)
+        {
+            var providerResponse = ex.Response as HttpWebResponse;
+            if (providerResponse != null)
+            {
+                var statusCode = (int)providerResponse.StatusCode;
+                var statusText = providerResponse.StatusDescription;
+                var payload = ReadProviderResponse(providerResponse);
+                return new StudioApiResponse
+                {
+                    StatusCode = statusCode,
+                    StatusText = statusText,
+                    ContentType = string.IsNullOrWhiteSpace(payload.ContentType) ? "application/json; charset=utf-8" : payload.ContentType,
+                    Body = payload.Body
+                };
+            }
+            return JsonError(502, ReadWebException(ex));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(502, ex.Message);
+        }
+    }
+
+    private static void EnsureMinecraftAgentServiceStarted()
+    {
+        if (ProbeMinecraftAgentService()) return;
+        lock (MinecraftAgentServiceLock)
+        {
+            if (ProbeMinecraftAgentService()) return;
+            if (minecraftAgentServiceProcess != null && !minecraftAgentServiceProcess.HasExited)
+            {
+                WaitForMinecraftAgentService();
+                return;
+            }
+            minecraftAgentServiceProcess = null;
+            if (HasMinecraftAgentListener())
+            {
+                throw new InvalidOperationException(
+                    "Minecraft agent port " + MinecraftAgentServicePort + " is already used by another or unhealthy process. " +
+                    "Close that process before enabling Minecraft control."
+                );
+            }
+            var nodeExe = Live2DStudioLauncher.FindMemoryNodeExecutable(repoRoot);
+            if (string.IsNullOrWhiteSpace(nodeExe)) throw new InvalidOperationException("Node.js is required for the Minecraft agent.");
+            var script = Path.Combine(repoRoot, "tools", "minecraft", "minecraft-agent-service.mjs");
+            if (!File.Exists(script)) throw new InvalidOperationException("Minecraft agent service is missing.");
+            if (!File.Exists(Path.Combine(repoRoot, "node_modules", "mineflayer", "package.json")))
+            {
+                throw new InvalidOperationException("Minecraft dependencies are missing. Run npm install in the project once.");
+            }
+            var start = new ProcessStartInfo
+            {
+                FileName = nodeExe,
+                Arguments = QuoteArgument(script) + " --port " + MinecraftAgentServicePort + " --parent-pid " + Process.GetCurrentProcess().Id,
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            start.EnvironmentVariables["NODE_ENV"] = "production";
+            try
+            {
+                minecraftAgentServiceProcess = Process.Start(start);
+                WaitForMinecraftAgentService();
+            }
+            catch
+            {
+                var failed = minecraftAgentServiceProcess;
+                minecraftAgentServiceProcess = null;
+                try { if (failed != null && !failed.HasExited) failed.Kill(); } catch { }
+                throw;
+            }
+        }
+    }
+
+    private static void WaitForMinecraftAgentService()
+    {
+        for (var i = 0; i < 80; i++)
+        {
+            if (ProbeMinecraftAgentService()) return;
+            if (minecraftAgentServiceProcess != null && minecraftAgentServiceProcess.HasExited)
+            {
+                throw new InvalidOperationException("Minecraft agent exited before it became ready.");
+            }
+            Thread.Sleep(125);
+        }
+        throw new InvalidOperationException("Minecraft agent did not become ready.");
+    }
+
+    private static bool ProbeMinecraftAgentService()
+    {
+        try
+        {
+            var response = GetBytes(
+                "http://127.0.0.1:" + MinecraftAgentServicePort + "/healthz",
+                new Dictionary<string, string>(),
+                600
+            );
+            var text = Encoding.UTF8.GetString(response.Body ?? new byte[0]);
+            var normalizedRoot = repoRoot.Replace("\\", "\\\\");
+            return text.IndexOf("\"service\":\"yachiyo-minecraft-agent\"", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                (text.IndexOf(repoRoot, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 text.IndexOf(normalizedRoot, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool HasMinecraftAgentListener()
+    {
+        try
+        {
+            using (var client = new TcpClient())
+            {
+                var connect = client.BeginConnect(IPAddress.Loopback, MinecraftAgentServicePort, null, null);
+                try { return connect.AsyncWaitHandle.WaitOne(350) && client.Connected; }
+                finally { connect.AsyncWaitHandle.Close(); }
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void AddLiveReplyTelemetryString(
+        Dictionary<string, object> input,
+        Dictionary<string, object> output,
+        string field,
+        int maxLength)
+    {
+        var value = GetString(input, field);
+        if (string.IsNullOrWhiteSpace(value)) return;
+        output[field] = value.Length <= maxLength ? value : value.Substring(0, maxLength);
+    }
+
+    private static void AddLiveReplyTelemetryNumber(
+        Dictionary<string, object> input,
+        Dictionary<string, object> output,
+        string field,
+        int maximum)
+    {
+        object raw;
+        if (input == null || !input.TryGetValue(field, out raw) || raw == null) return;
+        double value;
+        if (!double.TryParse(Convert.ToString(raw), out value)) return;
+        output[field] = (int)Math.Round(Math.Max(0, Math.Min(maximum, value)));
+    }
+
+    public static StudioApiResponse LiveReplyTelemetry(byte[] body)
+    {
+        try
+        {
+            if (body == null || body.Length == 0 || body.Length > 16 * 1024)
+            {
+                return JsonError(400, "Invalid telemetry payload size.");
+            }
+            var input = ParseObject(body);
+            var stage = GetString(input, "stage").ToLowerInvariant();
+            if (!LiveReplyTelemetryAllowedStages.Contains(stage))
+            {
+                return JsonError(400, "Invalid telemetry stage.");
+            }
+            var output = new Dictionary<string, object>
+            {
+                { "version", 1 },
+                { "receivedAt", DateTime.UtcNow.ToString("o") },
+                { "stage", stage }
+            };
+            AddLiveReplyTelemetryString(input, output, "timestamp", 64);
+            AddLiveReplyTelemetryString(input, output, "turnId", 64);
+            AddLiveReplyTelemetryString(input, output, "source", 24);
+            AddLiveReplyTelemetryString(input, output, "messageType", 24);
+            AddLiveReplyTelemetryString(input, output, "outcome", 48);
+            AddLiveReplyTelemetryString(input, output, "failureKind", 48);
+            AddLiveReplyTelemetryNumber(input, output, "audienceCount", 20);
+            AddLiveReplyTelemetryNumber(input, output, "paidCount", 20);
+            AddLiveReplyTelemetryNumber(input, output, "queueDepth", 100000);
+            AddLiveReplyTelemetryNumber(input, output, "durationMs", 3600000);
+            AddLiveReplyTelemetryNumber(input, output, "attempt", 10);
+
+            var directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "YachiyoLive2DStudio\\diagnostics");
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, "live-reply-telemetry-" + DateTime.UtcNow.ToString("yyyyMMdd") + ".jsonl");
+            var line = Json.Serialize(output) + Environment.NewLine;
+            lock (LiveReplyTelemetryLock)
+            {
+                File.AppendAllText(path, line, new UTF8Encoding(false));
+            }
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "accepted", true }
+            });
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceWarning("Live reply telemetry append failed: " + ex.Message);
+            return JsonError(500, "Telemetry persistence failed.");
+        }
+    }
+
+    public static StudioApiResponse VisionContext(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            if (!GetBoolean(input, "enabled", true))
+            {
+                return JsonOk(new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "enabled", false }
+                });
+            }
+
+            NativePoint nativePoint;
+            if (!GetCursorPos(out nativePoint))
+            {
+                return JsonError(500, "Unable to read cursor position.");
+            }
+
+            var cursor = new Point(nativePoint.X, nativePoint.Y);
+            var cropSize = (int)Math.Round(GetDouble(input, "cropSize", DefaultVisionCropSize, 256, MaxVisionCropSize));
+            var includeImages = GetBoolean(input, "includeImages", true) && GetBoolean(input, "sendScreenshot", true);
+            var includeFullScreen = GetBoolean(input, "includeFullScreen", false);
+            var pointerWindow = DescribeWindow(WindowFromPoint(nativePoint), "pointer");
+            var foregroundWindow = DescribeWindow(GetForegroundWindow(), "foreground");
+            var redacted = LooksSensitiveVisionWindow(pointerWindow) || LooksSensitiveVisionWindow(foregroundWindow);
+            var screenBounds = SystemInformation.VirtualScreen;
+            var payload = new Dictionary<string, object>
+            {
+                { "success", true },
+                { "enabled", true },
+                { "capturedAt", DateTime.UtcNow.ToString("o") },
+                { "cursor", new Dictionary<string, object> { { "x", cursor.X }, { "y", cursor.Y } } },
+                { "screen", RectPayload(screenBounds) },
+                { "pointerWindow", pointerWindow },
+                { "foregroundWindow", foregroundWindow },
+                { "redacted", redacted }
+            };
+
+            if (redacted)
+            {
+                payload["redactionReason"] = "sensitive-window";
+            }
+            else if (includeImages)
+            {
+                payload["image"] = CaptureVisionImages(cursor, cropSize, includeFullScreen);
+            }
+
+            return JsonOk(payload);
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse BilibiliConnectInfo(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var requestedRoomId = GetInt(input, "roomId");
+            if (requestedRoomId <= 0)
+            {
+                return JsonError(400, "请填写有效的 B站直播间 ID");
+            }
+
+            var cookie = GetString(input, "cookie");
+            var room = GetJson(
+                "https://api.live.bilibili.com/room/v1/Room/room_init?id=" + requestedRoomId,
+                BilibiliHeaders(requestedRoomId, cookie));
+            EnsureBilibiliSuccess(room, "解析 B站直播间失败");
+            var roomData = GetObject(room, "data") ?? new Dictionary<string, object>();
+            var actualRoomId = GetInt(roomData, "room_id");
+            if (actualRoomId <= 0)
+            {
+                throw new InvalidOperationException("B站没有返回有效的真实直播间 ID");
+            }
+
+            var headers = BilibiliHeaders(actualRoomId, cookie);
+            var authenticatedUid = 0;
+            int.TryParse(ReadCookieValue(cookie, "DedeUserID"), out authenticatedUid);
+            var canAuthenticate = authenticatedUid > 0 &&
+                !string.IsNullOrWhiteSpace(ReadCookieValue(cookie, "SESSDATA"));
+            var authMode = "anonymous";
+            var authWarning = string.Empty;
+            var authFailureStage = string.Empty;
+            var authFailureCode = 0;
+            Dictionary<string, object> danmaku = null;
+            if (canAuthenticate)
+            {
+                var authProbeStage = "nav";
+                try
+                {
+                    var nav = GetJson("https://api.bilibili.com/x/web-interface/nav", headers);
+                    EnsureBilibiliSuccess(nav, "获取 B站 WBI 签名密钥失败");
+                    authProbeStage = "wbi-sign";
+                    var wbi = GetObject(GetObject(nav, "data"), "wbi_img") ?? new Dictionary<string, object>();
+                    var imgKey = BilibiliWbiKey(GetString(wbi, "img_url"));
+                    var subKey = BilibiliWbiKey(GetString(wbi, "sub_url"));
+                    var signedQuery = SignBilibiliWbiQuery(actualRoomId, imgKey, subKey);
+                    authProbeStage = "danmaku-info";
+                    danmaku = GetJson(
+                        "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?" + signedQuery,
+                        headers);
+                    EnsureBilibiliSuccess(danmaku, "获取 B站认证弹幕配置失败");
+                    authMode = "authenticated";
+                }
+                catch (Exception ex)
+                {
+                    danmaku = null;
+                    authFailureStage = authProbeStage;
+                    var apiError = ex as BilibiliApiException;
+                    authFailureCode = apiError == null ? 0 : apiError.Code;
+                    authWarning = "登录态已失效或认证接口暂不可用，已自动使用匿名模式；用户名可能被隐藏。";
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(cookie))
+            {
+                authWarning = "Cookie 缺少有效的 SESSDATA 或 DedeUserID，已使用匿名模式；用户名可能被隐藏。";
+            }
+            if (danmaku == null)
+            {
+                danmaku = GetJson(
+                    "https://api.live.bilibili.com/room/v1/Danmu/getConf?room_id=" + actualRoomId + "&platform=pc&player=web",
+                    headers);
+                EnsureBilibiliSuccess(danmaku, "获取 B站弹幕配置失败");
+            }
+            var connection = GetObject(danmaku, "data") ?? new Dictionary<string, object>();
+            var hostList = GetArray(connection, "host_server_list") ?? GetArray(connection, "host_list") ?? new object[0];
+            Dictionary<string, object> selectedHost = null;
+            foreach (var item in hostList)
+            {
+                var candidate = item as Dictionary<string, object>;
+                if (candidate == null || string.IsNullOrWhiteSpace(GetString(candidate, "host"))) continue;
+                if (selectedHost == null) selectedHost = candidate;
+                if (GetInt(candidate, "wss_port") > 0)
+                {
+                    selectedHost = candidate;
+                    break;
+                }
+            }
+
+            var token = GetString(connection, "token");
+            var host = selectedHost == null ? GetString(connection, "host") : GetString(selectedHost, "host");
+            var port = selectedHost == null ? 443 : GetInt(selectedHost, "wss_port");
+            if (port <= 0) port = 443;
+            if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(host))
+            {
+                throw new InvalidOperationException("B站没有返回可用的弹幕服务器或临时 Key");
+            }
+
+            var buvid = ReadCookieValue(cookie, "buvid3");
+            if (string.IsNullOrWhiteSpace(buvid))
+            {
+                var fingerprint = GetJson("https://api.bilibili.com/x/frontend/finger/spi", headers);
+                EnsureBilibiliSuccess(fingerprint, "获取 B站匿名身份失败");
+                buvid = GetString(GetObject(fingerprint, "data"), "b_3");
+            }
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "roomId", requestedRoomId },
+                { "actualRoomId", actualRoomId },
+                { "liveStatus", GetInt(roomData, "live_status") },
+                { "uid", authMode == "authenticated" ? authenticatedUid : 0 },
+                { "token", token },
+                { "buvid", buvid },
+                { "host", host },
+                { "port", port },
+                { "authMode", authMode },
+                { "userNamesComplete", authMode == "authenticated" },
+                { "authWarning", authWarning },
+                { "authFailureStage", authFailureStage },
+                { "authFailureCode", authFailureCode }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(502, ex.Message);
+        }
+    }
+
+    private static Dictionary<string, string> BilibiliHeaders(int roomId, string cookie)
+    {
+        var headers = new Dictionary<string, string>
+        {
+            { "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36" },
+            { "Referer", "https://live.bilibili.com/" + roomId },
+            { "Accept", "application/json, text/plain, */*" }
+        };
+        if (!string.IsNullOrWhiteSpace(cookie)) headers["Cookie"] = cookie.Trim();
+        return headers;
+    }
+
+    private static string BilibiliWbiKey(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return string.Empty;
+        var slash = url.LastIndexOf('/');
+        var fileName = slash >= 0 ? url.Substring(slash + 1) : url;
+        var dot = fileName.LastIndexOf('.');
+        return dot > 0 ? fileName.Substring(0, dot) : fileName;
+    }
+
+    private static string SignBilibiliWbiQuery(int roomId, string imgKey, string subKey)
+    {
+        var permutation = new[]
+        {
+            46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
+            27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
+            37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
+            22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52
+        };
+        var source = (imgKey ?? string.Empty) + (subKey ?? string.Empty);
+        if (source.Length < 64)
+        {
+            throw new InvalidOperationException("B站没有返回有效的 WBI 签名密钥");
+        }
+        var mixin = new StringBuilder(32);
+        foreach (var index in permutation)
+        {
+            mixin.Append(source[index]);
+            if (mixin.Length >= 32) break;
+        }
+        var epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var timestamp = (long)(DateTime.UtcNow - epoch).TotalSeconds;
+        var query = "id=" + roomId + "&type=0&wts=" + timestamp;
+        byte[] hash;
+        using (var md5 = MD5.Create())
+        {
+            hash = md5.ComputeHash(Encoding.UTF8.GetBytes(query + mixin));
+        }
+        var signature = new StringBuilder(hash.Length * 2);
+        foreach (var value in hash) signature.Append(value.ToString("x2"));
+        return query + "&w_rid=" + signature;
+    }
+
+    private static void EnsureBilibiliSuccess(Dictionary<string, object> payload, string context)
+    {
+        var code = GetInt(payload, "code");
+        if (code == 0) return;
+        var message = FirstNonEmpty(GetString(payload, "message"), GetString(payload, "msg"), "code " + code);
+        throw new BilibiliApiException(code, context + "：" + message);
+    }
+
+    private static string ReadCookieValue(string cookie, string name)
+    {
+        if (string.IsNullOrWhiteSpace(cookie) || string.IsNullOrWhiteSpace(name)) return string.Empty;
+        var prefix = name + "=";
+        foreach (var part in cookie.Split(';'))
+        {
+            var value = part.Trim();
+            if (value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return value.Substring(prefix.Length);
+            }
+        }
+        return string.Empty;
+    }
+
+    public static StudioApiResponse Live2DItems()
+    {
+        try
+        {
+            EnsureLive2DItemDirectory();
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "itemDirectory", Live2DItemDirectory() },
+                { "manifestPath", Live2DItemManifestPath() },
+                { "files", ListLive2DItemFiles() },
+                { "manifest", ReadLive2DItemManifest() }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse Live2DItemsManifest(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var itemsValue = GetArray(input, "Items") ?? GetArray(input, "items") ?? new object[0];
+            var manifest = new Dictionary<string, object>
+            {
+                { "Version", GetDouble(input, "Version", GetDouble(input, "version", 1, 1, 99), 1, 99) },
+                { "BasePath", "items" },
+                { "Items", itemsValue }
+            };
+            EnsureLive2DItemDirectory();
+            File.WriteAllText(Live2DItemManifestPath(), Json.Serialize(manifest) + Environment.NewLine, Encoding.UTF8);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "manifest", manifest }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse Live2DItemsImport(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var files = GetArray(input, "files") ?? new object[0];
+            var imported = new List<Dictionary<string, object>>();
+            EnsureLive2DItemDirectory();
+            foreach (var file in files)
+            {
+                var data = file as Dictionary<string, object>;
+                if (data == null) continue;
+                var name = SanitizeLive2DItemFileName(FirstNonEmpty(GetString(data, "name"), GetString(data, "fileName"), "item.png"));
+                var encoded = FirstNonEmpty(GetString(data, "dataBase64"), GetString(data, "base64"), GetString(data, "data"));
+                if (string.IsNullOrWhiteSpace(encoded)) continue;
+                var comma = encoded.IndexOf(',');
+                if (comma >= 0) encoded = encoded.Substring(comma + 1);
+                var bytes = Convert.FromBase64String(encoded);
+                if (bytes.Length <= 0 || bytes.Length > 24 * 1024 * 1024) continue;
+                var destination = Path.Combine(Live2DItemDirectory(), name);
+                File.WriteAllBytes(destination, bytes);
+                imported.Add(DescribeImportedLive2DItemFile(destination));
+            }
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "files", imported },
+                { "allFiles", ListLive2DItemFiles() }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    private static string Live2DItemDirectory()
+    {
+        return Path.Combine(repoRoot, "models", "tsukimi-yachiyo", "items");
+    }
+
+    private static string Live2DItemManifestPath()
+    {
+        return Path.Combine(repoRoot, "models", "tsukimi-yachiyo", "vts-items.local.json");
+    }
+
+    private static void EnsureLive2DItemDirectory()
+    {
+        Directory.CreateDirectory(Live2DItemDirectory());
+        Directory.CreateDirectory(Path.GetDirectoryName(Live2DItemManifestPath()));
+    }
+
+    private static object ReadLive2DItemManifest()
+    {
+        EnsureLive2DItemDirectory();
+        if (!File.Exists(Live2DItemManifestPath()))
+        {
+            return new Dictionary<string, object>
+            {
+                { "Version", 1 },
+                { "BasePath", "items" },
+                { "Items", new object[0] }
+            };
+        }
+        return Json.DeserializeObject(File.ReadAllText(Live2DItemManifestPath(), Encoding.UTF8));
+    }
+
+    private static List<Dictionary<string, object>> ListLive2DItemFiles()
+    {
+        var result = ListLive2DItemFilesInDirectory(Live2DItemDirectory());
+        result.Sort((left, right) => string.Compare(GetString(left, "file"), GetString(right, "file"), StringComparison.OrdinalIgnoreCase));
+        return result;
+    }
+
+    private static List<Dictionary<string, object>> ListLive2DItemFilesInDirectory(string directory)
+    {
+        var result = new List<Dictionary<string, object>>();
+        var modelAssets = DiscoverLive2DModelAssets(directory);
+        if (modelAssets.Count > 0) return modelAssets;
+
+        foreach (var childDirectory in Directory.GetDirectories(directory))
+        {
+            var name = Path.GetFileName(childDirectory);
+            if (string.IsNullOrWhiteSpace(name) || name.StartsWith(".")) continue;
+            result.AddRange(ListLive2DItemFilesInDirectory(childDirectory));
+        }
+
+        foreach (var file in Directory.GetFiles(directory))
+        {
+            if (Path.GetFileName(file).StartsWith(".")) continue;
+            if (!IsLive2DImageItemFile(file)) continue;
+        }
+        AddLive2DImageAssets(result, directory);
+        return result;
+    }
+
+    private static List<Dictionary<string, object>> DiscoverLive2DModelAssets(string directory)
+    {
+        var result = new List<Dictionary<string, object>>();
+        var modelFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in Directory.GetFiles(directory))
+        {
+            if (IsModel3File(file)) modelFiles.Add(Path.GetFileName(file));
+        }
+
+        foreach (var vtubePath in Directory.GetFiles(directory, "*.vtube.json"))
+        {
+            Dictionary<string, object> vtube = null;
+            try { vtube = Json.DeserializeObject(File.ReadAllText(vtubePath, Encoding.UTF8)) as Dictionary<string, object>; } catch {}
+            var refs = GetObject(vtube, "FileReferences");
+            var modelFile = GetString(refs, "Model");
+            if (string.IsNullOrWhiteSpace(modelFile) || !modelFiles.Contains(modelFile) || !File.Exists(Path.Combine(directory, modelFile))) continue;
+            result.Add(DescribeLive2DModelItemFile(directory, modelFile, Path.GetFileName(vtubePath), vtube));
+            modelFiles.Remove(modelFile);
+        }
+
+        foreach (var modelFile in modelFiles)
+        {
+            result.Add(DescribeLive2DModelItemFile(directory, modelFile, string.Empty, null));
+        }
+
+        return result;
+    }
+
+    private static string Live2DItemRelativePath(string file)
+    {
+        var root = Live2DItemDirectory().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return Path.GetFullPath(file).Substring(root.Length).Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    private static Dictionary<string, object> DescribeLive2DImageItemFile(string file)
+    {
+        var relative = Live2DItemRelativePath(file);
+        var info = new FileInfo(file);
+        return new Dictionary<string, object>
+        {
+            { "type", "image" },
+            { "itemType", "image" },
+            { "file", relative },
+            { "name", Path.GetFileNameWithoutExtension(file) },
+            { "url", "/models/tsukimi-yachiyo/items/" + relative },
+            { "previewUrl", "/models/tsukimi-yachiyo/items/" + relative },
+            { "sizeBytes", info.Length },
+            { "updatedAt", new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds() }
+        };
+    }
+
+    private static void AddLive2DImageAssets(List<Dictionary<string, object>> result, string directory)
+    {
+        var imageFiles = new List<string>();
+        foreach (var file in Directory.GetFiles(directory))
+        {
+            if (Path.GetFileName(file).StartsWith(".")) continue;
+            if (IsLive2DImageItemFile(file)) imageFiles.Add(file);
+        }
+
+        var grouped = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        var singles = new List<string>();
+        foreach (var file in imageFiles)
+        {
+            var key = ImageSequenceKey(file);
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                singles.Add(file);
+                continue;
+            }
+            List<string> group;
+            if (!grouped.TryGetValue(key, out group))
+            {
+                group = new List<string>();
+                grouped[key] = group;
+            }
+            group.Add(file);
+        }
+
+        foreach (var pair in grouped)
+        {
+            var group = pair.Value;
+            if (group.Count < 2)
+            {
+                singles.AddRange(group);
+                continue;
+            }
+            group.Sort((left, right) =>
+            {
+                var numeric = ImageSequenceNumber(left).CompareTo(ImageSequenceNumber(right));
+                return numeric != 0 ? numeric : string.Compare(Path.GetFileName(left), Path.GetFileName(right), StringComparison.OrdinalIgnoreCase);
+            });
+            result.Add(DescribeLive2DImageSequence(directory, group));
+        }
+
+        foreach (var file in singles)
+        {
+            result.Add(DescribeLive2DImageItemFile(file));
+        }
+    }
+
+    private static string ImageSequenceKey(string file)
+    {
+        var fileName = Path.GetFileNameWithoutExtension(file) ?? string.Empty;
+        var match = System.Text.RegularExpressions.Regex.Match(fileName, @"^(.*?)(\d+)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!match.Success) return string.Empty;
+        return match.Groups[1].Value + "|" + Path.GetExtension(file).ToLowerInvariant();
+    }
+
+    private static int ImageSequenceNumber(string file)
+    {
+        var fileName = Path.GetFileNameWithoutExtension(file) ?? string.Empty;
+        var match = System.Text.RegularExpressions.Regex.Match(fileName, @"(\d+)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        int value;
+        return match.Success && int.TryParse(match.Groups[1].Value, out value) ? value : 0;
+    }
+
+    private static Dictionary<string, object> DescribeLive2DImageSequence(string directory, List<string> files)
+    {
+        var first = files[0];
+        var frames = new List<string>();
+        long sizeBytes = 0;
+        long updatedAt = 0;
+        foreach (var file in files)
+        {
+            var info = new FileInfo(file);
+            sizeBytes += info.Length;
+            updatedAt = Math.Max(updatedAt, new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds());
+            frames.Add(Live2DItemRelativePath(file));
+        }
+        var firstFrame = frames.Count > 0 ? frames[0] : Live2DItemRelativePath(first);
+        return new Dictionary<string, object>
+        {
+            { "type", "sequence" },
+            { "itemType", "sequence" },
+            { "file", firstFrame },
+            { "frames", frames.ToArray() },
+            { "fps", 12 },
+            { "name", FirstNonEmpty(Path.GetFileName(directory), Path.GetFileNameWithoutExtension(first)) },
+            { "url", "/models/tsukimi-yachiyo/items/" + firstFrame },
+            { "previewUrl", "/models/tsukimi-yachiyo/items/" + firstFrame },
+            { "frameCount", frames.Count },
+            { "sizeBytes", sizeBytes },
+            { "updatedAt", updatedAt }
+        };
+    }
+
+    private static Dictionary<string, object> DescribeLive2DModelItemFile(string directory, string modelFile, string vtubeFile, Dictionary<string, object> vtube)
+    {
+        var absoluteModel = Path.Combine(directory, modelFile);
+        var relativeModel = Live2DItemRelativePath(absoluteModel);
+        var relativeVTube = string.IsNullOrWhiteSpace(vtubeFile) ? string.Empty : Live2DItemRelativePath(Path.Combine(directory, vtubeFile));
+        var refs = GetObject(vtube, "FileReferences");
+        var iconFile = GetString(refs, "Icon");
+        var relativeIcon = !string.IsNullOrWhiteSpace(iconFile) && File.Exists(Path.Combine(directory, iconFile))
+            ? Live2DItemRelativePath(Path.Combine(directory, iconFile))
+            : string.Empty;
+        var info = new FileInfo(absoluteModel);
+        var name = FirstNonEmpty(GetString(vtube, "Name"), System.Text.RegularExpressions.Regex.Replace(Path.GetFileName(modelFile), @"\.(model3|vtube)\.json$", string.Empty, System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+        return new Dictionary<string, object>
+        {
+            { "type", "live2d" },
+            { "itemType", "live2d" },
+            { "file", relativeModel },
+            { "modelFile", relativeModel },
+            { "vtubeFile", relativeVTube },
+            { "iconFile", relativeIcon },
+            { "name", name },
+            { "url", "/models/tsukimi-yachiyo/items/" + relativeModel },
+            { "previewUrl", string.IsNullOrWhiteSpace(relativeIcon) ? string.Empty : "/models/tsukimi-yachiyo/items/" + relativeIcon },
+            { "sizeBytes", info.Length },
+            { "updatedAt", new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds() }
+        };
+    }
+
+    private static bool IsLive2DImageItemFile(string file)
+    {
+        var extension = Path.GetExtension(file).ToLowerInvariant();
+        foreach (var allowed in Live2DImageItemExtensions)
+        {
+            if (extension == allowed) return true;
+        }
+        return false;
+    }
+
+    private static Dictionary<string, object> DescribeImportedLive2DItemFile(string file)
+    {
+        if (IsLive2DImageItemFile(file)) return DescribeLive2DImageItemFile(file);
+        if (IsModel3File(file)) return DescribeLive2DModelItemFile(Path.GetDirectoryName(file), Path.GetFileName(file), string.Empty, null);
+        var relative = Live2DItemRelativePath(file);
+        var info = new FileInfo(file);
+        return new Dictionary<string, object>
+        {
+            { "type", "live2d" },
+            { "itemType", "live2d" },
+            { "file", relative },
+            { "modelFile", string.Empty },
+            { "name", Path.GetFileNameWithoutExtension(file) },
+            { "url", "/models/tsukimi-yachiyo/items/" + relative },
+            { "previewUrl", string.Empty },
+            { "sizeBytes", info.Length },
+            { "updatedAt", new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds() }
+        };
+    }
+
+    private static bool IsModel3File(string file)
+    {
+        return System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(file) ?? string.Empty, @"\.model3\.json$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    private static bool IsVTubeFile(string file)
+    {
+        return System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(file) ?? string.Empty, @"\.vtube\.json$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    private static bool IsLive2DModelPackageFile(string file)
+    {
+        return IsModel3File(file) || IsVTubeFile(file) || System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(file) ?? string.Empty, @"\.moc3$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    private static string SanitizeLive2DItemFileName(string name)
+    {
+        var fileName = Path.GetFileName(name ?? string.Empty);
+        foreach (var invalid in Path.GetInvalidFileNameChars())
+        {
+            fileName = fileName.Replace(invalid, '_');
+        }
+        if (string.IsNullOrWhiteSpace(fileName)) fileName = "item.png";
+        if (!IsLive2DImageItemFile(fileName) && !IsLive2DModelPackageFile(fileName)) throw new InvalidOperationException("Unsupported item file type.");
+        return fileName;
+    }
+
+    public static StudioApiResponse LocalMusicSearch(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var query = GetString(input, "query");
+            var limit = (int)Math.Round(GetDouble(input, "limit", GetDouble(input, "searchLimit", DefaultLocalMusicSearchLimit, 1, 50), 1, 50));
+            var maxScanFiles = (int)Math.Round(GetDouble(input, "localMaxScanFiles", DefaultLocalMusicMaxScanFiles, 100, 20000));
+            var roots = ResolveLocalMusicRoots(input);
+            var matches = new List<Dictionary<string, object>>();
+            var scanned = 0;
+
+            foreach (var root in roots)
+            {
+                if (scanned >= maxScanFiles) break;
+                foreach (var file in EnumerateLocalMusicFiles(root, maxScanFiles - scanned))
+                {
+                    scanned++;
+                    var score = ScoreLocalMusicFile(file, query);
+                    if (!string.IsNullOrWhiteSpace(query) && score <= 0) continue;
+                    matches.Add(BuildLocalMusicCandidate(file, query, score));
+                }
+            }
+
+            matches.Sort(delegate(Dictionary<string, object> left, Dictionary<string, object> right)
+            {
+                var scoreCompare = GetInt(right, "_score") - GetInt(left, "_score");
+                if (scoreCompare != 0) return scoreCompare;
+                return string.Compare(GetString(left, "title"), GetString(right, "title"), StringComparison.OrdinalIgnoreCase);
+            });
+
+            var candidates = new List<object>();
+            for (var i = 0; i < matches.Count && i < limit; i++)
+            {
+                candidates.Add(matches[i]);
+            }
+
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "local-library" },
+                { "query", query },
+                { "roots", roots.ToArray() },
+                { "scanned", scanned },
+                { "candidates", candidates }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse LocalMusicFile(string query)
+    {
+        try
+        {
+            var parameters = ParseQueryParameters(query);
+            string encoded;
+            if (!parameters.TryGetValue("path", out encoded))
+            {
+                parameters.TryGetValue("id", out encoded);
+            }
+            var filePath = DecodeLocalMusicPath(encoded);
+            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath) || !IsLocalAudioFile(filePath))
+            {
+                return JsonError(404, "Local music file was not found or is not a supported audio file.");
+            }
+
+            return new StudioApiResponse
+            {
+                StatusCode = 200,
+                StatusText = "OK",
+                ContentType = LocalAudioContentType(filePath),
+                Body = File.ReadAllBytes(filePath)
+            };
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicSearch(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var query = GetString(input, "query");
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                return JsonError(400, "NetEase Cloud Music query is required.");
+            }
+
+            var limit = (int)Math.Round(GetDouble(input, "limit", GetDouble(input, "searchLimit", DefaultLocalMusicSearchLimit, 1, 50), 1, 50));
+            var apiUrl = NormalizeNeteaseMusicApiUrl(input);
+            var headers = NeteaseMusicHeaders(input);
+            Dictionary<string, object> data = null;
+            Exception lastError = null;
+
+            try
+            {
+                data = GetJson(BuildNeteaseApiUrl("https://music.163.com", "/api/cloudsearch/pc", new Dictionary<string, string>
+                {
+                    { "s", query },
+                    { "type", "1" },
+                    { "limit", limit.ToString() },
+                    { "offset", "0" }
+                }), headers, NeteaseMusicApiRequestTimeoutMs);
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+
+            if (!NeteaseMusicSearchHasSongs(data))
+            {
+                foreach (var route in new[] { "/cloudsearch", "/search" })
+                {
+                    try
+                    {
+                        data = GetJson(BuildNeteaseApiUrl(apiUrl, route, new Dictionary<string, string>
+                        {
+                            { "keywords", query },
+                            { "limit", limit.ToString() },
+                            { "type", "1" }
+                        }), headers, NeteaseMusicApiRequestTimeoutMs);
+                        if (NeteaseMusicSearchHasSongs(data)) break;
+                    }
+                    catch (Exception ex)
+                    {
+                        lastError = ex;
+                    }
+                }
+            }
+
+            if (data == null && lastError != null)
+            {
+                throw lastError;
+            }
+            var result = GetObject(data, "result");
+            var songs = GetArray(result, "songs") ?? GetArray(data, "songs") ?? new object[0];
+            var candidates = new List<object>();
+
+            foreach (var item in songs)
+            {
+                var song = item as Dictionary<string, object>;
+                if (song == null) continue;
+                var candidate = BuildNeteaseMusicCandidate(song, query);
+                if (candidate != null) candidates.Add(candidate);
+                if (candidates.Count >= limit) break;
+            }
+
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "query", query },
+                { "apiUrl", apiUrl },
+                { "candidates", candidates }
+            });
+        }
+        catch (WebException ex)
+        {
+            return JsonError(GetStatusCode(ex, 502), "NetEase Cloud Music API search failed: " + LimitText(ReadWebException(ex), 500));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicResolve(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var candidate = GetObject(input, "candidate") ?? new Dictionary<string, object>();
+            var songId = GetString(input, "songId");
+            if (string.IsNullOrWhiteSpace(songId)) songId = GetString(candidate, "songId");
+            if (string.IsNullOrWhiteSpace(songId)) songId = GetString(candidate, "id");
+            if (string.IsNullOrWhiteSpace(songId))
+            {
+                return JsonError(400, "NetEase Cloud Music songId is required.");
+            }
+
+            var apiUrl = NormalizeNeteaseMusicApiUrl(input);
+            var level = NormalizeNeteaseMusicQualityLevel(GetString(input, "neteaseQualityLevel"));
+            var bitrate = (int)Math.Round(GetDouble(input, "neteaseBitrate", DefaultNeteaseMusicBitrate, 96000, 999000));
+            var headers = NeteaseMusicHeaders(input);
+            var detail = ResolveNeteaseMusicUrl(apiUrl, songId, level, bitrate, GetBoolean(input, "neteaseUnblock", false), GetString(input, "neteaseUnblockSource"), headers);
+            var expectedDurationMs = GetInt(candidate, "durationMs");
+            if (IsNeteaseMusicTrialDetail(detail) || IsNeteaseMusicTruncatedDetail(detail, expectedDurationMs))
+            {
+                return JsonError(403, "NetEase Cloud Music returned a preview instead of the full track. Refresh the NetEase account login and confirm that this account can play the song in full.");
+            }
+            var directUrl = GetString(detail, "url");
+            if (string.IsNullOrWhiteSpace(directUrl))
+            {
+                return JsonError(404, "NetEase Cloud Music did not return a playable URL. The song may be unavailable without Cookie, VIP permission, or unblock support.");
+            }
+
+            ValidateHttpMediaUrl(directUrl);
+            var token = CreateNeteaseMusicStreamTicket(directUrl, ReadNeteaseCookie(input));
+            var streamUrl = "/api/music/netease/stream?token=" + Uri.EscapeDataString(token);
+            var resolvedCandidate = new Dictionary<string, object>
+            {
+                { "provider", "netease-cloud" },
+                { "songId", songId },
+                { "url", streamUrl },
+                { "title", FirstNonEmpty(GetString(candidate, "title"), GetString(candidate, "name"), songId) },
+                { "artist", FirstNonEmpty(GetString(candidate, "artist"), GetString(candidate, "artistName"), string.Empty) },
+                { "album", FirstNonEmpty(GetString(candidate, "album"), GetString(candidate, "albumName"), string.Empty) },
+                { "artworkUrl", GetString(candidate, "artworkUrl") },
+                { "durationMs", expectedDurationMs },
+                { "quality", FirstNonEmpty(GetString(detail, "resolvedLevel"), level, DefaultNeteaseMusicQualityLevel) },
+                { "bitrate", GetInt(detail, "br") },
+                { "expiresInMs", NeteaseMusicStreamTicketTtlSeconds * 1000 }
+            };
+
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "candidate", resolvedCandidate }
+            });
+        }
+        catch (WebException ex)
+        {
+            return JsonError(GetStatusCode(ex, 502), "NetEase Cloud Music API resolve failed: " + LimitText(ReadWebException(ex), 500));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicStream(string query)
+    {
+        try
+        {
+            var parameters = ParseQueryParameters(query);
+            string token;
+            if (!parameters.TryGetValue("token", out token) || string.IsNullOrWhiteSpace(token))
+            {
+                return JsonError(400, "NetEase Cloud Music stream token is required.");
+            }
+
+            NeteaseMusicStreamTicket ticket;
+            if (!TryGetNeteaseMusicStreamTicket(token, out ticket))
+            {
+                return JsonError(404, "NetEase Cloud Music stream token expired or was not found.");
+            }
+
+            ValidateHttpMediaUrl(ticket.Url);
+            var provider = GetBytes(ticket.Url, NeteaseMusicAudioHeaders(ticket.Cookie));
+            return new StudioApiResponse
+            {
+                StatusCode = 200,
+                StatusText = "OK",
+                ContentType = string.IsNullOrWhiteSpace(provider.ContentType) ? "audio/mpeg" : provider.ContentType,
+                Body = provider.Body
+            };
+        }
+        catch (WebException ex)
+        {
+            return JsonError(GetStatusCode(ex, 502), "NetEase Cloud Music stream failed: " + LimitText(ReadWebException(ex), 500));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicManagedStatus(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var apiUrl = NormalizeNeteaseMusicApiUrl(input);
+            if (IsManagedNeteaseMusicApiUrl(apiUrl))
+            {
+                EnsureNeteaseMusicApiServiceStarted();
+            }
+            var cookiePath = GetString(input, "neteaseCookiePath");
+            var cookiePathExists = !string.IsNullOrWhiteSpace(cookiePath) &&
+                File.Exists(Path.GetFullPath(Environment.ExpandEnvironmentVariables(cookiePath.Trim().Trim('"'))));
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "managed", IsManagedNeteaseMusicApiUrl(apiUrl) },
+                { "apiUrl", apiUrl },
+                { "ready", IsManagedNeteaseMusicApiUrl(apiUrl) ? ProbeNeteaseMusicApiService() : true },
+                { "cookiePath", cookiePath },
+                { "cookiePathExists", cookiePathExists },
+                { "cookieConfigured", !string.IsNullOrWhiteSpace(ReadNeteaseCookie(input)) }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicAccount(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var storedCookie = ReadStoredNeteaseCookie();
+            var cookie = !string.IsNullOrWhiteSpace(storedCookie) ? storedCookie : ReadManualNeteaseCookie(input);
+            if (string.IsNullOrWhiteSpace(cookie))
+            {
+                return JsonOk(new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "provider", "netease-cloud" },
+                    { "loggedIn", false },
+                    { "source", "none" },
+                    { "account", null }
+                });
+            }
+
+            var account = FetchNeteaseMusicAccount(cookie);
+            var loggedIn = GetBoolean(account, "loggedIn", false);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "loggedIn", loggedIn },
+                { "source", !string.IsNullOrWhiteSpace(storedCookie) ? "secure-storage" : "manual" },
+                { "account", loggedIn ? account : null }
+            });
+        }
+        catch (WebException ex)
+        {
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "loggedIn", false },
+                { "source", HasStoredNeteaseCookie() ? "secure-storage" : "manual" },
+                { "account", null },
+                { "message", "NetEase account status request failed: " + LimitText(ReadWebException(ex), 300) }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicQrCreate(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var apiUrl = NormalizeNeteaseMusicApiUrl(input);
+            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
+            var keyResponse = GetJson(BuildNeteaseApiUrl(apiUrl, "/login/qr/key", new Dictionary<string, string>
+            {
+                { "timestamp", timestamp },
+                { "ua", "pc" }
+            }), NeteaseMusicHeaders(input), NeteaseMusicApiRequestTimeoutMs);
+            var keyData = GetObject(keyResponse, "data") ?? new Dictionary<string, object>();
+            var key = GetString(keyData, "unikey");
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return JsonError(502, "NetEase Cloud Music did not return a QR login key.");
+            }
+
+            var qrResponse = GetJson(BuildNeteaseApiUrl(apiUrl, "/login/qr/create", new Dictionary<string, string>
+            {
+                { "key", key },
+                { "qrimg", "true" },
+                { "platform", "web" },
+                { "timestamp", timestamp },
+                { "ua", "pc" }
+            }), NeteaseMusicHeaders(input), NeteaseMusicApiRequestTimeoutMs);
+            var qrData = GetObject(qrResponse, "data") ?? new Dictionary<string, object>();
+            var qrUrl = GetString(qrData, "qrurl");
+            var qrImage = GetString(qrData, "qrimg");
+            if (string.IsNullOrWhiteSpace(qrUrl) && string.IsNullOrWhiteSpace(qrImage))
+            {
+                return JsonError(502, "NetEase Cloud Music did not return a QR code.");
+            }
+
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "key", key },
+                { "qrUrl", qrUrl },
+                { "qrImage", qrImage },
+                { "status", 801 },
+                { "message", "请使用网易云音乐 App 扫码登录" }
+            });
+        }
+        catch (WebException ex)
+        {
+            return JsonError(GetStatusCode(ex, 502), "NetEase QR login creation failed: " + LimitText(ReadWebException(ex), 500));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicQrCheck(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var key = GetString(input, "key");
+            if (string.IsNullOrWhiteSpace(key) || key.Length < 8 || key.Length > 512 ||
+                !RegexContains(key, @"^[A-Za-z0-9_-]+$"))
+            {
+                return JsonError(400, "NetEase QR login key is invalid.");
+            }
+
+            var apiUrl = NormalizeNeteaseMusicApiUrl(input);
+            var response = GetJson(BuildNeteaseApiUrl(apiUrl, "/login/qr/check", new Dictionary<string, string>
+            {
+                { "key", key },
+                { "timestamp", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString() },
+                { "ua", "pc" }
+            }), NeteaseMusicHeaders(input), NeteaseMusicApiRequestTimeoutMs);
+            var status = GetInt(response, "code");
+            var message = FirstNonEmpty(GetString(response, "message"), GetString(response, "msg"), NeteaseQrStatusMessage(status));
+
+            if (status != 803)
+            {
+                return JsonOk(new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "provider", "netease-cloud" },
+                    { "status", status },
+                    { "loggedIn", false },
+                    { "message", message }
+                });
+            }
+
+            var cookie = GetString(response, "cookie");
+            if (!IsValidNeteaseLoginCookie(cookie))
+            {
+                return JsonError(502, "NetEase QR login succeeded but no valid MUSIC_U Cookie was returned.");
+            }
+            SaveStoredNeteaseCookie(cookie);
+
+            Dictionary<string, object> account;
+            try
+            {
+                account = FetchNeteaseMusicAccount(cookie);
+            }
+            catch
+            {
+                account = new Dictionary<string, object>
+                {
+                    { "provider", "netease-cloud" },
+                    { "loggedIn", true },
+                    { "userId", string.Empty },
+                    { "displayName", "网易云账号" },
+                    { "avatarUrl", string.Empty }
+                };
+            }
+
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "status", 803 },
+                { "loggedIn", true },
+                { "source", "secure-storage" },
+                { "account", account },
+                { "message", "网易云音乐登录成功" }
+            });
+        }
+        catch (WebException ex)
+        {
+            return JsonError(GetStatusCode(ex, 502), "NetEase QR login status request failed: " + LimitText(ReadWebException(ex), 500));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse NeteaseMusicLogout()
+    {
+        try
+        {
+            DeleteStoredNeteaseCookie();
+            lock (NeteaseMusicTicketLock)
+            {
+                NeteaseMusicStreamTickets.Clear();
+            }
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "provider", "netease-cloud" },
+                { "loggedIn", false }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    private static List<string> ResolveLocalMusicRoots(Dictionary<string, object> input)
+    {
+        var roots = new List<string>();
+        var seen = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        if (GetBoolean(input, "localIncludeProjectMusic", true))
+        {
+            AddLocalMusicRoot(roots, seen, Path.Combine(repoRoot, "music"));
+            AddLocalMusicRoot(roots, seen, Path.Combine(repoRoot, "assets", "music"));
+        }
+
+        if (GetBoolean(input, "localIncludeUserMusic", true))
+        {
+            AddLocalMusicRoot(roots, seen, Environment.GetFolderPath(Environment.SpecialFolder.MyMusic));
+        }
+
+        var configured = GetString(input, "localLibraryPaths");
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            foreach (var item in configured.Split(LocalMusicPathSeparators, StringSplitOptions.RemoveEmptyEntries))
+            {
+                AddLocalMusicRoot(roots, seen, item);
+            }
+        }
+
+        var array = GetArray(input, "localLibraryPathList");
+        if (array != null)
+        {
+            foreach (var item in array)
+            {
+                AddLocalMusicRoot(roots, seen, Convert.ToString(item));
+            }
+        }
+
+        return roots;
+    }
+
+    private static void AddLocalMusicRoot(List<string> roots, Dictionary<string, bool> seen, string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        try
+        {
+            var fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(path.Trim().Trim('"')));
+            var root = (Path.GetPathRoot(fullPath) ?? string.Empty).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var normalized = fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (root.Length > 0 && string.Equals(root, normalized, StringComparison.OrdinalIgnoreCase)) return;
+            if (!Directory.Exists(fullPath)) return;
+            if (seen.ContainsKey(fullPath)) return;
+            seen[fullPath] = true;
+            roots.Add(fullPath);
+        }
+        catch
+        {
+            // Ignore invalid optional music roots.
+        }
+    }
+
+    private static IEnumerable<string> EnumerateLocalMusicFiles(string root, int maxFiles)
+    {
+        var results = new List<string>();
+        if (string.IsNullOrWhiteSpace(root) || maxFiles <= 0) return results;
+
+        var pending = new Queue<string>();
+        pending.Enqueue(root);
+        while (pending.Count > 0 && results.Count < maxFiles)
+        {
+            var directory = pending.Dequeue();
+            try
+            {
+                var attributes = File.GetAttributes(directory);
+                if ((attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint) continue;
+            }
+            catch
+            {
+                continue;
+            }
+
+            string[] files;
+            try { files = Directory.GetFiles(directory); }
+            catch { files = new string[0]; }
+
+            foreach (var file in files)
+            {
+                if (results.Count >= maxFiles) break;
+                if (IsLocalAudioFile(file)) results.Add(file);
+            }
+
+            string[] directories;
+            try { directories = Directory.GetDirectories(directory); }
+            catch { directories = new string[0]; }
+
+            foreach (var child in directories)
+            {
+                if (results.Count >= maxFiles) break;
+                pending.Enqueue(child);
+            }
+        }
+
+        return results;
+    }
+
+    private static bool IsLocalAudioFile(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        switch (extension)
+        {
+            case ".mp3":
+            case ".m4a":
+            case ".aac":
+            case ".wav":
+            case ".flac":
+            case ".ogg":
+            case ".oga":
+            case ".opus":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static string LocalAudioContentType(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        switch (extension)
+        {
+            case ".mp3":
+                return "audio/mpeg";
+            case ".m4a":
+                return "audio/mp4";
+            case ".aac":
+                return "audio/aac";
+            case ".wav":
+                return "audio/wav";
+            case ".flac":
+                return "audio/flac";
+            case ".ogg":
+            case ".oga":
+                return "audio/ogg";
+            case ".opus":
+                return "audio/opus";
+            default:
+                return "application/octet-stream";
+        }
+    }
+
+    private static Dictionary<string, object> BuildLocalMusicCandidate(string filePath, string query, int score)
+    {
+        var fullPath = Path.GetFullPath(filePath);
+        var encodedPath = Convert.ToBase64String(Encoding.UTF8.GetBytes(fullPath));
+        var name = CleanLocalTrackName(Path.GetFileNameWithoutExtension(fullPath));
+        var title = name;
+        var artist = string.Empty;
+        var parts = System.Text.RegularExpressions.Regex.Split(name, @"\s+[-\u2010-\u2015]\s+");
+        if (parts.Length >= 2)
+        {
+            artist = parts[0].Trim();
+            title = string.Join(" - ", SubArray(parts, 1)).Trim();
+        }
+        if (string.IsNullOrWhiteSpace(title)) title = Path.GetFileNameWithoutExtension(fullPath);
+
+        return new Dictionary<string, object>
+        {
+            { "provider", "local-library" },
+            { "songId", encodedPath },
+            { "url", "/api/music/local/file?path=" + Uri.EscapeDataString(encodedPath) },
+            { "title", title },
+            { "artist", artist },
+            { "album", Path.GetFileName(Path.GetDirectoryName(fullPath) ?? string.Empty) },
+            { "fileName", Path.GetFileName(fullPath) },
+            { "query", query },
+            { "durationMs", 0 },
+            { "_score", score }
+        };
+    }
+
+    private static string[] SubArray(string[] source, int start)
+    {
+        if (source == null || start >= source.Length) return new string[0];
+        var result = new string[source.Length - start];
+        Array.Copy(source, start, result, 0, result.Length);
+        return result;
+    }
+
+    private static string CleanLocalTrackName(string value)
+    {
+        var text = value ?? string.Empty;
+        text = text.Replace('_', ' ');
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"^\s*\d{1,3}[\s.．_-]+", string.Empty);
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        return text;
+    }
+
+    private static int ScoreLocalMusicFile(string filePath, string query)
+    {
+        var normalizedQuery = NormalizeLocalMusicText(query);
+        if (string.IsNullOrWhiteSpace(normalizedQuery)) return 1;
+
+        var title = NormalizeLocalMusicText(CleanLocalTrackName(Path.GetFileNameWithoutExtension(filePath)));
+        var album = NormalizeLocalMusicText(Path.GetFileName(Path.GetDirectoryName(filePath) ?? string.Empty));
+        var combined = (title + " " + album).Trim();
+        if (title == normalizedQuery) return 1200;
+        if (title.IndexOf(normalizedQuery, StringComparison.OrdinalIgnoreCase) >= 0) return 900;
+        if (combined.IndexOf(normalizedQuery, StringComparison.OrdinalIgnoreCase) >= 0) return 760;
+
+        var words = normalizedQuery.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0) return 0;
+
+        var matched = 0;
+        foreach (var word in words)
+        {
+            if (combined.IndexOf(word, StringComparison.OrdinalIgnoreCase) >= 0) matched++;
+        }
+        if (matched == words.Length) return 620 + matched * 20;
+        if (matched > 0) return matched * 90;
+        return 0;
+    }
+
+    private static string NormalizeLocalMusicText(string value)
+    {
+        var text = (value ?? string.Empty).Normalize(NormalizationForm.FormKC).ToLowerInvariant();
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"[\p{P}\p{S}_]+", " ");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        return text;
+    }
+
+    private static Dictionary<string, string> ParseQueryParameters(string query)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(query)) return result;
+        foreach (var part in query.Split('&'))
+        {
+            var separator = part.IndexOf('=');
+            var key = separator >= 0 ? part.Substring(0, separator) : part;
+            var value = separator >= 0 ? part.Substring(separator + 1) : string.Empty;
+            if (string.IsNullOrWhiteSpace(key)) continue;
+            result[Uri.UnescapeDataString(key)] = Uri.UnescapeDataString(value.Replace("+", "%20"));
+        }
+        return result;
+    }
+
+    private static string DecodeLocalMusicPath(string encoded)
+    {
+        if (string.IsNullOrWhiteSpace(encoded)) return string.Empty;
+        var text = encoded.Trim();
+        try
+        {
+            return Path.GetFullPath(Encoding.UTF8.GetString(Convert.FromBase64String(text)));
+        }
+        catch
+        {
+            try { return Path.GetFullPath(Uri.UnescapeDataString(text)); }
+            catch { return string.Empty; }
+        }
+    }
+
+    private static string NormalizeNeteaseMusicApiUrl(Dictionary<string, object> input)
+    {
+        var apiUrl = GetString(input, "neteaseApiUrl");
+        if (string.IsNullOrWhiteSpace(apiUrl)) apiUrl = GetString(input, "apiUrl");
+        if (string.IsNullOrWhiteSpace(apiUrl)) apiUrl = DefaultNeteaseMusicApiUrl;
+        apiUrl = apiUrl.Trim().TrimEnd('/');
+        if (RegexContains(apiUrl, @"^http://(127\.0\.0\.1|localhost):3000/?$"))
+        {
+            apiUrl = DefaultNeteaseMusicApiUrl;
+        }
+        ValidateRemoteOrLoopbackUrl(apiUrl);
+        if (IsManagedNeteaseMusicApiUrl(apiUrl))
+        {
+            EnsureNeteaseMusicApiServiceStarted();
+            return ManagedNeteaseMusicApiUrl();
+        }
+        return apiUrl;
+    }
+
+    private static bool IsManagedNeteaseMusicApiUrl(string apiUrl)
+    {
+        Uri parsed;
+        return Uri.TryCreate(apiUrl, UriKind.Absolute, out parsed) &&
+            parsed.Scheme == Uri.UriSchemeHttp &&
+            IsLoopbackHost(parsed.Host) &&
+            (parsed.Port == NeteaseMusicApiLogicalPort ||
+             parsed.Port == 3000 ||
+             (neteaseMusicApiServicePort > 0 && parsed.Port == neteaseMusicApiServicePort));
+    }
+
+    private static string ManagedNeteaseMusicApiUrl()
+    {
+        if (neteaseMusicApiServicePort <= 0)
+        {
+            throw new InvalidOperationException("Managed NetEase Cloud Music API has not started.");
+        }
+        return "http://127.0.0.1:" + neteaseMusicApiServicePort;
+    }
+
+    private static string NormalizeNeteaseMusicQualityLevel(string value)
+    {
+        var level = (value ?? string.Empty).Trim().ToLowerInvariant();
+        switch (level)
+        {
+            case "standard":
+            case "higher":
+            case "exhigh":
+            case "lossless":
+            case "hires":
+            case "jyeffect":
+            case "sky":
+            case "jymaster":
+                return level;
+            default:
+                return DefaultNeteaseMusicQualityLevel;
+        }
+    }
+
+    private static string BuildNeteaseApiUrl(string apiUrl, string path, Dictionary<string, string> parameters)
+    {
+        var parsed = new Uri(apiUrl);
+        var builder = new UriBuilder(parsed);
+        var basePath = builder.Path == "/" ? string.Empty : builder.Path.TrimEnd('/');
+        builder.Path = basePath + "/" + (path ?? string.Empty).TrimStart('/');
+        builder.Query = BuildQuery(parameters);
+        return builder.ToString();
+    }
+
+    private static Dictionary<string, string> NeteaseMusicHeaders(Dictionary<string, object> input)
+    {
+        return NeteaseMusicAudioHeaders(ReadNeteaseCookie(input));
+    }
+
+    private static bool IsNeteaseCookieAttribute(string name)
+    {
+        switch ((name ?? string.Empty).Trim().ToLowerInvariant())
+        {
+            case "domain":
+            case "expires":
+            case "httponly":
+            case "max-age":
+            case "partitioned":
+            case "path":
+            case "priority":
+            case "samesite":
+            case "secure":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static string NormalizeNeteaseCookie(string cookie)
+    {
+        var raw = (cookie ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw) || raw.Length > 128 * 1024) return string.Empty;
+
+        var names = new List<string>();
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var segment in raw.Split(';'))
+        {
+            var part = (segment ?? string.Empty).Trim();
+            var separator = part.IndexOf('=');
+            if (separator <= 0) continue;
+            var name = part.Substring(0, separator).Trim();
+            var value = part.Substring(separator + 1).Trim();
+            if (string.IsNullOrWhiteSpace(name) || IsNeteaseCookieAttribute(name) ||
+                !RegexContains(name, @"^[A-Za-z0-9_][A-Za-z0-9_.-]*$"))
+            {
+                continue;
+            }
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                values.Remove(name);
+                names.RemoveAll(item => string.Equals(item, name, StringComparison.OrdinalIgnoreCase));
+                continue;
+            }
+            if (!values.ContainsKey(name)) names.Add(name);
+            values[name] = value;
+        }
+
+        var normalized = new List<string>();
+        foreach (var name in names)
+        {
+            string value;
+            if (values.TryGetValue(name, out value)) normalized.Add(name + "=" + value);
+        }
+        return string.Join("; ", normalized.ToArray());
+    }
+
+    private static string ReadNeteaseCookie(Dictionary<string, object> input)
+    {
+        var storedCookie = ReadStoredNeteaseCookie();
+        return !string.IsNullOrWhiteSpace(storedCookie) ? storedCookie : ReadManualNeteaseCookie(input);
+    }
+
+    private static string ReadManualNeteaseCookie(Dictionary<string, object> input)
+    {
+        var inlineCookie = GetString(input, "neteaseCookie");
+        if (!string.IsNullOrWhiteSpace(inlineCookie)) return NormalizeNeteaseCookie(inlineCookie);
+
+        var cookiePath = GetString(input, "neteaseCookiePath");
+        if (string.IsNullOrWhiteSpace(cookiePath)) return string.Empty;
+        try
+        {
+            var fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(cookiePath.Trim().Trim('"')));
+            if (!File.Exists(fullPath)) return string.Empty;
+            var info = new FileInfo(fullPath);
+            if (info.Length > 128 * 1024) throw new InvalidOperationException("NetEase Cookie file is too large.");
+            return NormalizeNeteaseCookie(File.ReadAllText(fullPath, Encoding.UTF8));
+        }
+        catch (InvalidOperationException)
+        {
+            throw;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string NeteaseMusicAccountPath()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            NeteaseMusicAccountRelativePath);
+    }
+
+    private static bool HasStoredNeteaseCookie()
+    {
+        try
+        {
+            return File.Exists(NeteaseMusicAccountPath());
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string ReadStoredNeteaseCookie()
+    {
+        try
+        {
+            var path = NeteaseMusicAccountPath();
+            if (!File.Exists(path)) return string.Empty;
+            var encrypted = File.ReadAllBytes(path);
+            if (encrypted.Length == 0 || encrypted.Length > 256 * 1024) return string.Empty;
+            var entropy = Encoding.UTF8.GetBytes(NeteaseMusicAccountEntropy);
+            var plain = ProtectedData.Unprotect(encrypted, entropy, DataProtectionScope.CurrentUser);
+            var cookie = NormalizeNeteaseCookie(Encoding.UTF8.GetString(plain ?? new byte[0]));
+            return IsValidNeteaseLoginCookie(cookie) ? cookie : string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static void SaveStoredNeteaseCookie(string cookie)
+    {
+        var normalizedCookie = NormalizeNeteaseCookie(cookie);
+        if (!IsValidNeteaseLoginCookie(normalizedCookie))
+        {
+            throw new InvalidOperationException("NetEase login Cookie is invalid.");
+        }
+        var path = NeteaseMusicAccountPath();
+        var directory = Path.GetDirectoryName(path);
+        if (!Directory.Exists(directory)) Directory.CreateDirectory(directory);
+        var entropy = Encoding.UTF8.GetBytes(NeteaseMusicAccountEntropy);
+        var plain = Encoding.UTF8.GetBytes(normalizedCookie);
+        var encrypted = ProtectedData.Protect(plain, entropy, DataProtectionScope.CurrentUser);
+        File.WriteAllBytes(path, encrypted);
+    }
+
+    private static void DeleteStoredNeteaseCookie()
+    {
+        var path = NeteaseMusicAccountPath();
+        if (File.Exists(path)) File.Delete(path);
+    }
+
+    private static bool IsValidNeteaseLoginCookie(string cookie)
+    {
+        var normalizedCookie = NormalizeNeteaseCookie(cookie);
+        return !string.IsNullOrWhiteSpace(normalizedCookie) &&
+            normalizedCookie.Length <= 128 * 1024 &&
+            RegexContains(normalizedCookie, @"(^|;\s*)MUSIC_U=[^;]+");
+    }
+
+    private static Dictionary<string, object> FetchNeteaseMusicAccount(string cookie)
+    {
+        var response = GetJson(
+            "https://music.163.com/api/nuser/account/get",
+            NeteaseMusicAudioHeaders(cookie),
+            NeteaseMusicApiRequestTimeoutMs);
+        var account = GetObject(response, "account") ?? new Dictionary<string, object>();
+        var profile = GetObject(response, "profile") ?? new Dictionary<string, object>();
+        var userId = FirstNonEmpty(GetString(profile, "userId"), GetString(account, "id"), string.Empty);
+        var displayName = FirstNonEmpty(GetString(profile, "nickname"), GetString(account, "userName"), string.Empty);
+        var avatarUrl = GetString(profile, "avatarUrl");
+        var loggedIn = !string.IsNullOrWhiteSpace(userId) || !string.IsNullOrWhiteSpace(displayName);
+        return new Dictionary<string, object>
+        {
+            { "provider", "netease-cloud" },
+            { "loggedIn", loggedIn },
+            { "userId", userId },
+            { "displayName", displayName },
+            { "avatarUrl", avatarUrl }
+        };
+    }
+
+    private static string NeteaseQrStatusMessage(int status)
+    {
+        switch (status)
+        {
+            case 800: return "二维码已过期，请重新生成";
+            case 801: return "等待扫码";
+            case 802: return "已扫码，请在手机上确认";
+            case 803: return "登录成功";
+            default: return "正在确认网易云登录状态";
+        }
+    }
+
+    private static Dictionary<string, string> NeteaseMusicAudioHeaders(string cookie)
+    {
+        var headers = new Dictionary<string, string>
+        {
+            { "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36" },
+            { "Referer", "https://music.163.com/" }
+        };
+        var normalizedCookie = NormalizeNeteaseCookie(cookie);
+        if (!string.IsNullOrWhiteSpace(normalizedCookie))
+        {
+            headers["Cookie"] = normalizedCookie;
+        }
+        return headers;
+    }
+
+    private static Dictionary<string, object> GetJson(string url, Dictionary<string, string> headers, int timeoutMs = 120000)
+    {
+        var provider = GetBytes(url, headers, timeoutMs);
+        var text = Encoding.UTF8.GetString(provider.Body ?? new byte[0]);
+        return DeserializeObject(text);
+    }
+
+    private static Dictionary<string, object> BuildNeteaseMusicCandidate(Dictionary<string, object> song, string query)
+    {
+        var songId = GetString(song, "id");
+        if (string.IsNullOrWhiteSpace(songId)) return null;
+        var album = GetObject(song, "album") ?? GetObject(song, "al") ?? new Dictionary<string, object>();
+        var durationMs = GetInt(song, "duration");
+        if (durationMs <= 0) durationMs = GetInt(song, "dt");
+        return new Dictionary<string, object>
+        {
+            { "provider", "netease-cloud" },
+            { "songId", songId },
+            { "title", GetString(song, "name") },
+            { "artist", JoinNeteaseArtists(song) },
+            { "album", GetString(album, "name") },
+            { "artworkUrl", FirstNonEmpty(GetString(album, "picUrl"), GetString(album, "pic_str"), string.Empty) },
+            { "durationMs", durationMs },
+            { "query", query }
+        };
+    }
+
+    private static bool NeteaseMusicSearchHasSongs(Dictionary<string, object> data)
+    {
+        if (data == null) return false;
+        var result = GetObject(data, "result") ?? new Dictionary<string, object>();
+        var songs = GetArray(result, "songs") ?? GetArray(data, "songs");
+        return songs != null && songs.Length > 0;
+    }
+
+    private static string JoinNeteaseArtists(Dictionary<string, object> song)
+    {
+        var artists = GetArray(song, "artists") ?? GetArray(song, "ar") ?? new object[0];
+        var names = new List<string>();
+        foreach (var item in artists)
+        {
+            var artist = item as Dictionary<string, object>;
+            if (artist == null) continue;
+            var name = GetString(artist, "name");
+            if (!string.IsNullOrWhiteSpace(name)) names.Add(name);
+        }
+        return string.Join(" / ", names.ToArray());
+    }
+
+    private static Dictionary<string, object> ResolveNeteaseMusicUrl(
+        string apiUrl,
+        string songId,
+        string level,
+        int bitrate,
+        bool unblock,
+        string unblockSource,
+        Dictionary<string, string> headers)
+    {
+        Exception lastError = null;
+        Dictionary<string, object> previewDetail = null;
+        foreach (var fallbackLevel in NeteaseMusicQualityFallbacks(level))
+        {
+            try
+            {
+                var v1Parameters = new Dictionary<string, string>
+                {
+                    { "id", songId },
+                    { "level", fallbackLevel }
+                };
+                if (unblock)
+                {
+                    v1Parameters["unblock"] = "true";
+                    if (!string.IsNullOrWhiteSpace(unblockSource)) v1Parameters["source"] = unblockSource.Trim();
+                }
+                var detail = PickNeteaseMusicUrlDetail(GetJson(
+                    BuildNeteaseApiUrl(apiUrl, "/song/url/v1", v1Parameters),
+                    headers,
+                    NeteaseMusicResolveRequestTimeoutMs));
+                if (!string.IsNullOrWhiteSpace(GetString(detail, "url")))
+                {
+                    detail["resolvedLevel"] = FirstNonEmpty(GetString(detail, "level"), fallbackLevel);
+                    if (IsNeteaseMusicTrialDetail(detail))
+                    {
+                        previewDetail = detail;
+                        continue;
+                    }
+                    return detail;
+                }
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+        }
+
+        var legacyParameters = new Dictionary<string, string>
+        {
+            { "id", songId },
+            { "br", bitrate.ToString() }
+        };
+        if (unblock)
+        {
+            legacyParameters["unblock"] = "true";
+            if (!string.IsNullOrWhiteSpace(unblockSource)) legacyParameters["source"] = unblockSource.Trim();
+        }
+        try
+        {
+            var legacy = PickNeteaseMusicUrlDetail(GetJson(
+                BuildNeteaseApiUrl(apiUrl, "/song/url", legacyParameters),
+                headers,
+                NeteaseMusicResolveRequestTimeoutMs));
+            if (!string.IsNullOrWhiteSpace(GetString(legacy, "url")))
+            {
+                legacy["resolvedLevel"] = "legacy";
+                if (IsNeteaseMusicTrialDetail(legacy)) return previewDetail ?? legacy;
+            }
+            return !string.IsNullOrWhiteSpace(GetString(legacy, "url")) ? legacy : (previewDetail ?? legacy);
+        }
+        catch
+        {
+            if (lastError != null) throw lastError;
+            throw;
+        }
+    }
+
+    private static string[] NeteaseMusicQualityFallbacks(string level)
+    {
+        switch (NormalizeNeteaseMusicQualityLevel(level))
+        {
+            case "jymaster":
+                return new[] { "jymaster", "sky", "jyeffect", "hires", "lossless", "exhigh", "higher", "standard" };
+            case "sky":
+                return new[] { "sky", "jyeffect", "hires", "lossless", "exhigh", "higher", "standard" };
+            case "jyeffect":
+                return new[] { "jyeffect", "hires", "lossless", "exhigh", "higher", "standard" };
+            case "hires":
+                return new[] { "hires", "lossless", "exhigh", "higher", "standard" };
+            case "lossless":
+                return new[] { "lossless", "exhigh", "higher", "standard" };
+            case "exhigh":
+                return new[] { "exhigh", "higher", "standard" };
+            case "higher":
+                return new[] { "higher", "standard" };
+            default:
+                return new[] { "standard" };
+        }
+    }
+
+    private static Dictionary<string, object> PickNeteaseMusicUrlDetail(Dictionary<string, object> data)
+    {
+        var candidates = GetArray(data, "data") ?? new object[0];
+        foreach (var item in candidates)
+        {
+            var detail = item as Dictionary<string, object>;
+            if (detail == null) continue;
+            var url = FirstNonEmpty(GetString(detail, "url"), GetString(detail, "proxyUrl"), string.Empty);
+            object rawSize;
+            var hasSize = detail.TryGetValue("size", out rawSize) && rawSize != null;
+            if (string.IsNullOrWhiteSpace(url) || (hasSize && GetInt(detail, "size") == 0)) continue;
+            detail["url"] = url;
+            return detail;
+        }
+        return new Dictionary<string, object>();
+    }
+
+    private static bool IsNeteaseMusicTrialDetail(Dictionary<string, object> detail)
+    {
+        if (detail == null) return false;
+        object rawTrial;
+        if (detail.TryGetValue("freeTrialInfo", out rawTrial) && rawTrial != null &&
+            !string.Equals(Convert.ToString(rawTrial), "null", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        return GetInt(detail, "fee") > 0 && GetInt(detail, "payed") <= 0;
+    }
+
+    private static bool IsNeteaseMusicTruncatedDetail(Dictionary<string, object> detail, int expectedDurationMs)
+    {
+        if (detail == null || expectedDurationMs < 60000) return false;
+        var size = GetInt(detail, "size");
+        var bitrate = GetInt(detail, "br");
+        if (size <= 0 || bitrate <= 0) return false;
+        var estimatedDurationMs = (double)size * 8d * 1000d / bitrate;
+        return estimatedDurationMs < expectedDurationMs * 0.72d;
+    }
+
+    private static void ValidateHttpMediaUrl(string url)
+    {
+        Uri parsed;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out parsed) ||
+            (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new InvalidOperationException("Invalid NetEase Cloud Music media URL.");
+        }
+    }
+
+    private static string CreateNeteaseMusicStreamTicket(string directUrl, string cookie)
+    {
+        var token = Guid.NewGuid().ToString("N");
+        var now = DateTimeOffset.UtcNow;
+        lock (NeteaseMusicTicketLock)
+        {
+            CleanupNeteaseMusicStreamTickets(now);
+            NeteaseMusicStreamTickets[token] = new NeteaseMusicStreamTicket
+            {
+                Url = directUrl,
+                Cookie = NormalizeNeteaseCookie(cookie),
+                ExpiresAt = now.AddSeconds(NeteaseMusicStreamTicketTtlSeconds)
+            };
+        }
+        return token;
+    }
+
+    private static bool TryGetNeteaseMusicStreamTicket(string token, out NeteaseMusicStreamTicket ticket)
+    {
+        ticket = null;
+        var now = DateTimeOffset.UtcNow;
+        lock (NeteaseMusicTicketLock)
+        {
+            CleanupNeteaseMusicStreamTickets(now);
+            if (!NeteaseMusicStreamTickets.TryGetValue(token ?? string.Empty, out ticket)) return false;
+            if (ticket.ExpiresAt <= now)
+            {
+                NeteaseMusicStreamTickets.Remove(token);
+                ticket = null;
+                return false;
+            }
+            return true;
+        }
+    }
+
+    private static void CleanupNeteaseMusicStreamTickets(DateTimeOffset now)
+    {
+        var expired = new List<string>();
+        foreach (var pair in NeteaseMusicStreamTickets)
+        {
+            if (pair.Value == null || pair.Value.ExpiresAt <= now) expired.Add(pair.Key);
+        }
+        foreach (var token in expired)
+        {
+            NeteaseMusicStreamTickets.Remove(token);
+        }
+    }
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+        }
+        return string.Empty;
+    }
+
+    private static Dictionary<string, object> CaptureVisionImages(Point cursor, int cropSize, bool includeFullScreen)
+    {
+        var virtualBounds = SystemInformation.VirtualScreen;
+        var cropRect = ClampRectAroundPoint(cursor, cropSize, virtualBounds);
+        var image = new Dictionary<string, object>
+        {
+            { "mimeType", "image/png" },
+            { "cursorCropRect", RectPayload(cropRect) }
+        };
+
+        using (var crop = new Bitmap(cropRect.Width, cropRect.Height, PixelFormat.Format32bppArgb))
+        using (var graphics = Graphics.FromImage(crop))
+        {
+            graphics.CopyFromScreen(new Point(cropRect.Left, cropRect.Top), Point.Empty, cropRect.Size);
+            DrawCursorMarker(graphics, new Point(cursor.X - cropRect.Left, cursor.Y - cropRect.Top));
+            image["cursorCropBase64"] = BitmapToPngBase64(crop);
+        }
+
+        if (includeFullScreen)
+        {
+            using (var full = new Bitmap(virtualBounds.Width, virtualBounds.Height, PixelFormat.Format32bppArgb))
+            using (var graphics = Graphics.FromImage(full))
+            {
+                graphics.CopyFromScreen(new Point(virtualBounds.Left, virtualBounds.Top), Point.Empty, virtualBounds.Size);
+                DrawCursorMarker(graphics, new Point(cursor.X - virtualBounds.Left, cursor.Y - virtualBounds.Top));
+                image["fullScreenBase64"] = BitmapToPngBase64(full);
+                image["fullScreenRect"] = RectPayload(virtualBounds);
+            }
+        }
+
+        return image;
+    }
+
+    private static Rectangle ClampRectAroundPoint(Point point, int size, Rectangle bounds)
+    {
+        var width = Math.Min(Math.Max(1, size), Math.Max(1, bounds.Width));
+        var height = Math.Min(Math.Max(1, size), Math.Max(1, bounds.Height));
+        var left = point.X - width / 2;
+        var top = point.Y - height / 2;
+        if (left < bounds.Left) left = bounds.Left;
+        if (top < bounds.Top) top = bounds.Top;
+        if (left + width > bounds.Right) left = bounds.Right - width;
+        if (top + height > bounds.Bottom) top = bounds.Bottom - height;
+        return new Rectangle(left, top, width, height);
+    }
+
+    private static void DrawCursorMarker(Graphics graphics, Point point)
+    {
+        using (var pen = new Pen(Color.FromArgb(230, 255, 64, 96), 3))
+        using (var brush = new SolidBrush(Color.FromArgb(72, 255, 64, 96)))
+        {
+            graphics.DrawLine(pen, point.X - 22, point.Y, point.X + 22, point.Y);
+            graphics.DrawLine(pen, point.X, point.Y - 22, point.X, point.Y + 22);
+            graphics.FillEllipse(brush, point.X - 18, point.Y - 18, 36, 36);
+            graphics.DrawEllipse(pen, point.X - 18, point.Y - 18, 36, 36);
+        }
+    }
+
+    private static string BitmapToPngBase64(Bitmap bitmap)
+    {
+        using (var stream = new MemoryStream())
+        {
+            bitmap.Save(stream, ImageFormat.Png);
+            return Convert.ToBase64String(stream.ToArray());
+        }
+    }
+
+    private static Dictionary<string, object> DescribeWindow(IntPtr handle, string relation)
+    {
+        if (handle == IntPtr.Zero)
+        {
+            return new Dictionary<string, object> { { "relation", relation }, { "available", false } };
+        }
+
+        var root = GetAncestor(handle, GA_ROOT);
+        if (root == IntPtr.Zero) root = handle;
+        uint processId;
+        GetWindowThreadProcessId(root, out processId);
+        var title = ReadWindowText(root);
+        if (string.IsNullOrWhiteSpace(title)) title = ReadWindowText(handle);
+        var className = ReadClassName(root);
+        NativeRect nativeRect;
+        var bounds = GetWindowRect(root, out nativeRect)
+            ? RectPayload(new Rectangle(nativeRect.Left, nativeRect.Top, Math.Max(0, nativeRect.Right - nativeRect.Left), Math.Max(0, nativeRect.Bottom - nativeRect.Top)))
+            : new Dictionary<string, object>();
+        var processName = string.Empty;
+        var processPath = string.Empty;
+        try
+        {
+            var process = Process.GetProcessById((int)processId);
+            processName = process.ProcessName;
+            try { processPath = process.MainModule != null ? process.MainModule.FileName : string.Empty; } catch { processPath = string.Empty; }
+        }
+        catch
+        {
+            processName = string.Empty;
+        }
+
+        return new Dictionary<string, object>
+        {
+            { "relation", relation },
+            { "available", true },
+            { "title", title },
+            { "className", className },
+            { "processId", processId },
+            { "processName", processName },
+            { "processPath", processPath },
+            { "bounds", bounds }
+        };
+    }
+
+    private static string ReadWindowText(IntPtr handle)
+    {
+        var builder = new StringBuilder(512);
+        GetWindowText(handle, builder, builder.Capacity);
+        return builder.ToString();
+    }
+
+    private static string ReadClassName(IntPtr handle)
+    {
+        var builder = new StringBuilder(256);
+        GetClassName(handle, builder, builder.Capacity);
+        return builder.ToString();
+    }
+
+    private static Dictionary<string, object> RectPayload(Rectangle rect)
+    {
+        return new Dictionary<string, object>
+        {
+            { "x", rect.Left },
+            { "y", rect.Top },
+            { "width", rect.Width },
+            { "height", rect.Height },
+            { "right", rect.Right },
+            { "bottom", rect.Bottom }
+        };
+    }
+
+    private static bool LooksSensitiveVisionWindow(Dictionary<string, object> window)
+    {
+        if (window == null || !GetBoolean(window, "available", false)) return false;
+        var text = string.Join(" ", new[]
+        {
+            GetString(window, "title"),
+            GetString(window, "className"),
+            GetString(window, "processName"),
+            GetString(window, "processPath")
+        });
+        return RegexContains(text, @"password|passwd|secret|token|credential|1password|bitwarden|keepass|authenticator|private browsing|incognito|银行|支付|密码|验证码|令牌|密钥");
+    }
+
+    public static StudioApiResponse Chat(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var message = GetString(input, "message");
+            var apiKey = GetString(input, "apiKey");
+            var apiUrl = NormalizeChatUrl(GetString(input, "apiUrl"), GetString(input, "model"));
+            var model = GetString(input, "model");
+            var systemPrompt = GetString(input, "systemPrompt");
+
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return JsonError(400, "Message is required.");
+            }
+            if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(apiUrl))
+            {
+                return JsonError(400, "LLM API URL and API Key are required.");
+            }
+            ValidateRemoteOrLoopbackUrl(apiUrl);
+
+            var payload = BuildChatPayload(input, apiUrl, model, systemPrompt, message);
+            var responseText = PostJson(apiUrl, payload, ChatHeaders(apiUrl, apiKey));
+            var providerData = DeserializeObject(responseText);
+            var reply = PickReply(providerData);
+            if (string.IsNullOrWhiteSpace(reply))
+            {
+                reply = responseText;
+            }
+
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "data", new Dictionary<string, object> { { "reply", reply }, { "model", model } } }
+            });
+        }
+        catch (WebException ex)
+        {
+            return JsonError(GetStatusCode(ex, 502), ReadWebException(ex));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static void ChatStream(byte[] body, Action<byte[]> write)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var message = GetString(input, "message");
+            var apiKey = GetString(input, "apiKey");
+            var apiUrl = NormalizeChatUrl(GetString(input, "apiUrl"), GetString(input, "model"));
+            var model = GetString(input, "model");
+            var systemPrompt = GetString(input, "systemPrompt");
+
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                WriteSseEvent(write, "error", Json.Serialize(new Dictionary<string, object> { { "message", "Message is required." } }));
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(apiUrl))
+            {
+                WriteSseEvent(write, "error", Json.Serialize(new Dictionary<string, object> { { "message", "LLM API URL and API Key are required." } }));
+                return;
+            }
+            ValidateRemoteOrLoopbackUrl(apiUrl);
+
+            var payload = BuildChatPayload(input, apiUrl, model, systemPrompt, message);
+            payload["stream"] = true;
+            PostJsonStream(apiUrl, payload, ChatHeaders(apiUrl, apiKey), write);
+        }
+        catch (WebException ex)
+        {
+            WriteSseEvent(write, "error", Json.Serialize(new Dictionary<string, object>
+            {
+                { "message", ReadWebException(ex) },
+                { "status", GetStatusCode(ex, 502) }
+            }));
+        }
+        catch (Exception ex)
+        {
+            WriteSseEvent(write, "error", Json.Serialize(new Dictionary<string, object> { { "message", ex.Message } }));
+        }
+    }
+
+    public static StudioApiResponse Tts(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var provider = GetString(input, "provider");
+            if (string.IsNullOrEmpty(provider))
+            {
+                provider = "gpt-sovits";
+            }
+            provider = provider.ToLowerInvariant();
+
+            if (provider == "gpt-sovits")
+            {
+                return GptSovitsTts(input);
+            }
+            if (provider == "mimo" || RegexContains(GetString(input, "apiUrl"), @"xiaomimimo|token-plan-cn"))
+            {
+                return MimoTts(input);
+            }
+
+            return OpenAiTts(input);
+        }
+        catch (WebException ex)
+        {
+            return JsonError(GetStatusCode(ex, 502), ReadWebException(ex));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse Asr(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            var provider = GetString(input, "provider");
+            if (!string.IsNullOrWhiteSpace(provider) &&
+                !string.Equals(provider, "vosk", StringComparison.OrdinalIgnoreCase))
+            {
+                return JsonError(400, "Only local Vosk ASR is supported.");
+            }
+            if (string.IsNullOrWhiteSpace(GetString(input, "audioBase64")))
+            {
+                return JsonError(400, "audioBase64 is required.");
+            }
+            return ProxyAsrService(body);
+        }
+        catch (WebException ex)
+        {
+            return JsonError(GetStatusCode(ex, 502), ReadWebException(ex));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(500, ex.Message);
+        }
+    }
+
+    private static StudioApiResponse ProxyAsrService(byte[] body)
+    {
+        try
+        {
+            EnsureAsrServiceStarted();
+            var response = PostBytes("http://127.0.0.1:" + AsrServicePort + "/api/asr", Encoding.UTF8.GetString(body ?? new byte[0]), new Dictionary<string, string>());
+            return new StudioApiResponse
+            {
+                StatusCode = 200,
+                StatusText = "OK",
+                ContentType = string.IsNullOrWhiteSpace(response.ContentType) ? "application/json; charset=utf-8" : response.ContentType,
+                Body = response.Body
+            };
+        }
+        catch (WebException ex)
+        {
+            var providerResponse = ex.Response as HttpWebResponse;
+            if (providerResponse != null)
+            {
+                var statusCode = (int)providerResponse.StatusCode;
+                var statusText = providerResponse.StatusDescription;
+                var payload = ReadProviderResponse(providerResponse);
+                return new StudioApiResponse
+                {
+                    StatusCode = statusCode,
+                    StatusText = statusText,
+                    ContentType = string.IsNullOrWhiteSpace(payload.ContentType) ? "application/json; charset=utf-8" : payload.ContentType,
+                    Body = payload.Body
+                };
+            }
+            return JsonError(502, ReadWebException(ex));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(502, ex.Message);
+        }
+    }
+
+    private static void EnsureAsrServiceStarted()
+    {
+        if (ProbeAsrService()) return;
+        lock (AsrServiceLock)
+        {
+            if (ProbeAsrService()) return;
+            if (asrServiceProcess != null && !asrServiceProcess.HasExited)
+            {
+                WaitForAsrService();
+                return;
+            }
+
+            var start = CreateAsrServiceStartInfo();
+            start.EnvironmentVariables["YACHIYO_REPO_ROOT"] = repoRoot;
+            asrServiceProcess = Process.Start(start);
+            WaitForAsrService();
+        }
+    }
+
+    private static ProcessStartInfo CreateAsrServiceStartInfo()
+    {
+        var pythonScript = Path.Combine(repoRoot, "tools", "asr", "vosk_asr_service.py");
+        var pythonExe = FindPythonLauncher();
+        if (File.Exists(pythonScript) && !string.IsNullOrWhiteSpace(pythonExe) && CanImportPythonVosk(pythonExe))
+        {
+            var pythonArgs = string.Equals(Path.GetFileName(pythonExe), "py.exe", StringComparison.OrdinalIgnoreCase)
+                ? "-3.9 " + QuoteArgument(pythonScript)
+                : QuoteArgument(pythonScript);
+            return new ProcessStartInfo
+            {
+                FileName = pythonExe,
+                Arguments = pythonArgs + " --port " + AsrServicePort + " --repo-root " + QuoteArgument(repoRoot),
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+        }
+
+        var nodeDir = Live2DStudioLauncher.FindNodeDirectory(repoRoot);
+        var nodeScript = Path.Combine(repoRoot, "tools", "asr", "vosk-asr-service.mjs");
+        if (!string.IsNullOrWhiteSpace(nodeDir) && File.Exists(nodeScript))
+        {
+            return new ProcessStartInfo
+            {
+                FileName = Path.Combine(nodeDir, "node.exe"),
+                Arguments = QuoteArgument(nodeScript) + " --port " + AsrServicePort + " --repo-root " + QuoteArgument(repoRoot),
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+        }
+
+        throw new InvalidOperationException("Local Vosk ASR requires tools/asr/vosk_asr_service.py with Python Vosk, or tools/asr/vosk-asr-service.mjs with node_modules/vosk.");
+    }
+
+    private static void WaitForAsrService()
+    {
+        for (var i = 0; i < 40; i++)
+        {
+            if (ProbeAsrService()) return;
+            if (asrServiceProcess != null && asrServiceProcess.HasExited)
+            {
+                throw new InvalidOperationException("Vosk ASR service exited before it became ready. Install Python Vosk with py -3.9 -m pip install vosk, or install node_modules/vosk.");
+            }
+            Thread.Sleep(125);
+        }
+        throw new InvalidOperationException("Vosk ASR service did not become ready.");
+    }
+
+    private static bool ProbeAsrService()
+    {
+        try
+        {
+            var request = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + AsrServicePort + "/healthz");
+            request.Method = "GET";
+            request.Timeout = 500;
+            request.ReadWriteTimeout = 500;
+            using (var response = (HttpWebResponse)request.GetResponse())
+            {
+                return (int)response.StatusCode >= 200 && (int)response.StatusCode < 300;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool UsesMemoryDataProvider(Dictionary<string, object> input)
+    {
+        var provider = SanitizeMemoryToken(GetString(input, "provider"), "obsidian");
+        return string.Equals(provider, "sqlite_milvus", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(provider, "sqlite-milvus", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(provider, "sqlite", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static StudioApiResponse ProxyMemoryDataService(string route, byte[] body)
+    {
+        try
+        {
+            EnsureMemoryDataServiceStarted();
+            var response = PostBytes("http://127.0.0.1:" + MemoryDataServicePort + route, Encoding.UTF8.GetString(body ?? new byte[0]), new Dictionary<string, string>());
+            return new StudioApiResponse
+            {
+                StatusCode = 200,
+                StatusText = "OK",
+                ContentType = string.IsNullOrWhiteSpace(response.ContentType) ? "application/json; charset=utf-8" : response.ContentType,
+                Body = response.Body
+            };
+        }
+        catch (WebException ex)
+        {
+            var providerResponse = ex.Response as HttpWebResponse;
+            if (providerResponse != null)
+            {
+                var statusCode = (int)providerResponse.StatusCode;
+                var statusText = providerResponse.StatusDescription;
+                var payload = ReadProviderResponse(providerResponse);
+                return new StudioApiResponse
+                {
+                    StatusCode = statusCode,
+                    StatusText = statusText,
+                    ContentType = string.IsNullOrWhiteSpace(payload.ContentType) ? "application/json; charset=utf-8" : payload.ContentType,
+                    Body = payload.Body
+                };
+            }
+            return JsonError(502, ReadWebException(ex));
+        }
+        catch (Exception ex)
+        {
+            return JsonError(502, ex.Message);
+        }
+    }
+
+    private static void EnsureNeteaseMusicApiServiceStarted()
+    {
+        if (neteaseMusicApiServiceProcess != null &&
+            !neteaseMusicApiServiceProcess.HasExited &&
+            ProbeNeteaseMusicApiService()) return;
+        lock (NeteaseMusicApiServiceLock)
+        {
+            if (neteaseMusicApiServiceProcess != null &&
+                !neteaseMusicApiServiceProcess.HasExited)
+            {
+                if (ProbeNeteaseMusicApiService()) return;
+                WaitForNeteaseMusicApiService();
+                return;
+            }
+            neteaseMusicApiServiceProcess = null;
+            neteaseMusicApiServicePort = 0;
+
+            var nodeDir = Live2DStudioLauncher.FindNodeDirectory(repoRoot);
+            if (string.IsNullOrWhiteSpace(nodeDir))
+            {
+                throw new InvalidOperationException("Node.js is required for managed NetEase Cloud Music API.");
+            }
+            var nodeExe = Path.Combine(nodeDir, "node.exe");
+            var script = Path.Combine(repoRoot, "tools", "music", "netease-api-enhanced-service.mjs");
+            if (!File.Exists(script))
+            {
+                throw new InvalidOperationException("Managed NetEase Cloud Music API wrapper is missing.");
+            }
+            var packagePath = Path.Combine(repoRoot, "node_modules", "@neteasecloudmusicapienhanced", "api", "package.json");
+            if (!File.Exists(packagePath))
+            {
+                throw new InvalidOperationException("Managed NetEase Cloud Music API dependency is missing. Run npm install in the project once.");
+            }
+
+            neteaseMusicApiServicePort = ReserveFreeLoopbackPort();
+            var start = new ProcessStartInfo
+            {
+                FileName = nodeExe,
+                Arguments = QuoteArgument(script) + " --port " + neteaseMusicApiServicePort + " --host 127.0.0.1 --repo-root " + QuoteArgument(repoRoot),
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            start.EnvironmentVariables["YACHIYO_REPO_ROOT"] = repoRoot;
+            start.EnvironmentVariables["PORT"] = neteaseMusicApiServicePort.ToString();
+            start.EnvironmentVariables["HOST"] = "127.0.0.1";
+            start.EnvironmentVariables["NODE_ENV"] = "production";
+            start.EnvironmentVariables["CORS_ALLOW_ORIGIN"] = "*";
+            start.EnvironmentVariables["YACHIYO_MANAGED_INSTANCE"] = "live2d-studio";
+            try
+            {
+                neteaseMusicApiServiceProcess = Process.Start(start);
+                WaitForNeteaseMusicApiService();
+            }
+            catch
+            {
+                var failedProcess = neteaseMusicApiServiceProcess;
+                neteaseMusicApiServiceProcess = null;
+                neteaseMusicApiServicePort = 0;
+                try
+                {
+                    if (failedProcess != null && !failedProcess.HasExited) failedProcess.Kill();
+                }
+                catch
+                {
+                    // Best-effort cleanup after sidecar startup failure.
+                }
+                throw;
+            }
+        }
+    }
+
+    private static void WaitForNeteaseMusicApiService()
+    {
+        for (var i = 0; i < 80; i++)
+        {
+            if (ProbeNeteaseMusicApiService()) return;
+            if (neteaseMusicApiServiceProcess != null && neteaseMusicApiServiceProcess.HasExited)
+            {
+                throw new InvalidOperationException("Managed NetEase Cloud Music API exited before it became ready.");
+            }
+            Thread.Sleep(150);
+        }
+        throw new InvalidOperationException("Managed NetEase Cloud Music API did not become ready.");
+    }
+
+    private static bool ProbeNeteaseMusicApiService()
+    {
+        if (neteaseMusicApiServicePort <= 0) return false;
+        try
+        {
+            var request = (HttpWebRequest)WebRequest.Create(ManagedNeteaseMusicApiUrl() + "/healthz");
+            request.Method = "GET";
+            request.Timeout = 500;
+            request.ReadWriteTimeout = 500;
+            using (var response = (HttpWebResponse)request.GetResponse())
+            {
+                if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300) return false;
+                using (var reader = new StreamReader(response.GetResponseStream() ?? Stream.Null, Encoding.UTF8))
+                {
+                    var text = reader.ReadToEnd();
+                    return text.IndexOf("\"instance\":\"live2d-studio\"", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        text.IndexOf("\"instance\": \"live2d-studio\"", StringComparison.OrdinalIgnoreCase) >= 0;
+                }
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static int ReserveFreeLoopbackPort()
+    {
+        TcpListener listener = null;
+        try
+        {
+            listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            return ((IPEndPoint)listener.LocalEndpoint).Port;
+        }
+        finally
+        {
+            if (listener != null) listener.Stop();
+        }
+    }
+
+    private static void EnsureMemoryDataServiceStarted()
+    {
+        if (ProbeMemoryDataService()) return;
+        lock (MemoryDataServiceLock)
+        {
+            if (ProbeMemoryDataService()) return;
+            if (memoryDataServiceProcess != null && !memoryDataServiceProcess.HasExited)
+            {
+                WaitForMemoryDataService();
+                return;
+            }
+
+            // A launcher crash can leave this checkout's older sidecar bound to the fixed port.
+            // Never stop a healthy sidecar owned by another checkout (or an unrelated service).
+            var listenerKind = ProbeMemoryDataServiceListener();
+            if (listenerKind == MemoryDataServiceListenerKind.ForeignProject)
+            {
+                throw new InvalidOperationException(
+                    "Memory data service port " + MemoryDataServicePort + " is already used by another Yachiyo project instance. " +
+                    "Close that project before starting this one."
+                );
+            }
+            if (listenerKind == MemoryDataServiceListenerKind.Unrelated)
+            {
+                throw new InvalidOperationException(
+                    "Memory data service port " + MemoryDataServicePort + " is already used by another application. " +
+                    "Close that application or free the port before restarting Yachiyo."
+                );
+            }
+            if (listenerKind == MemoryDataServiceListenerKind.OwnedByCurrentProject)
+            {
+                TryRequestMemoryDataServiceShutdown();
+                for (var i = 0; i < 40 && ProbeMemoryDataServiceListener() != MemoryDataServiceListenerKind.None; i++)
+                {
+                    Thread.Sleep(125);
+                }
+                if (ProbeMemoryDataServiceListener() != MemoryDataServiceListenerKind.None)
+                {
+                    throw new InvalidOperationException(
+                        "An unhealthy memory data service is already using port " + MemoryDataServicePort + ". " +
+                        "Close the stale node process and restart the app."
+                    );
+                }
+            }
+
+            var nodeExe = Live2DStudioLauncher.FindMemoryNodeExecutable(repoRoot);
+            if (string.IsNullOrWhiteSpace(nodeExe))
+            {
+                throw new InvalidOperationException(
+                    "No installed Node.js runtime can load this project's better-sqlite3 native module. " +
+                    "Run npm install with the Node.js version used by the launcher, then restart the app."
+                );
+            }
+            var script = Path.Combine(repoRoot, "tools", "memory", "memory-data-service.mjs");
+            if (!File.Exists(script))
+            {
+                throw new InvalidOperationException("Memory data service script is missing.");
+            }
+
+            var start = new ProcessStartInfo
+            {
+                FileName = nodeExe,
+                Arguments = QuoteArgument(script) + " --port " + MemoryDataServicePort + " --repo-root " + QuoteArgument(repoRoot),
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            start.EnvironmentVariables["YACHIYO_REPO_ROOT"] = repoRoot;
+            start.EnvironmentVariables["YACHIYO_MEMORY_AUTOSTART_MANAGED_MILVUS"] = "0";
+            start.EnvironmentVariables["YACHIYO_MEMORY_MILVUS_URL"] = "http://127.0.0.1:19530";
+            start.EnvironmentVariables["YACHIYO_MEMORY_MILVUS_IMAGE"] = "milvusdb/milvus:v2.6.13";
+            start.EnvironmentVariables["YACHIYO_PERSONA_CORPUS_PATH"] = Path.GetFullPath(Path.Combine(repoRoot, "..", "yachiyo_novel_detailed_corpus.txt"));
+            memoryDataServiceProcess = Process.Start(start);
+            WaitForMemoryDataService();
+        }
+    }
+
+    private static string ManagedMemorySettingsJson()
+    {
+        var personaCorpusPath = Path.GetFullPath(Path.Combine(repoRoot, "..", "yachiyo_novel_detailed_corpus.txt"));
+        return Json.Serialize(new Dictionary<string, object>
+        {
+            { "provider", "sqlite-milvus" },
+            { "enabled", true },
+            { "personaCorpusPath", personaCorpusPath },
+            { "milvusEnabled", true },
+            { "milvusManaged", true },
+            { "milvusUrl", "http://127.0.0.1:19530" },
+            { "milvusCollection", "yachiyo_memory" },
+            { "milvusImage", "milvusdb/milvus:v2.6.13" },
+            { "embeddingDimension", 384 },
+            { "retrievalMode", "hybrid" },
+            { "writeMode", "auto-approved" },
+            { "maxNotesPerTurn", 4 },
+            { "sessionRollupEnabled", true },
+            { "gcEnabled", true },
+            { "gcArchiveDays", 30 },
+            { "gcForgetDays", 120 },
+            { "rawRetentionDays", 120 },
+            { "anchorImportanceThreshold", 0.72 }
+        });
+    }
+
+    private static void TryStartManagedMilvus()
+    {
+        try
+        {
+            PostBytes(
+                "http://127.0.0.1:" + MemoryDataServicePort + "/api/memory/managed-milvus/start",
+                ManagedMemorySettingsJson(),
+                new Dictionary<string, string>(),
+                10 * 60 * 1000);
+        }
+        catch
+        {
+            // The memory data service will report startup errors through health/actions.
+        }
+    }
+
+    private static void TryRequestMemoryDataServiceShutdown()
+    {
+        try
+        {
+            PostBytes(
+                "http://127.0.0.1:" + MemoryDataServicePort + "/api/memory/shutdown",
+                Json.Serialize(new Dictionary<string, object> { { "stopMilvus", false } }),
+                new Dictionary<string, string>(),
+                30000);
+        }
+        catch
+        {
+            // The process kill below is the fallback.
+        }
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        return "\"" + (value ?? string.Empty).Replace("\"", "\\\"") + "\"";
+    }
+
+    private static string FindPythonLauncher()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "py.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python39", "python.exe"),
+            Path.Combine("D:\\", "visual studio", "tools", "Python39_64", "python.exe")
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return FindOnPath("py.exe") ?? FindOnPath("python.exe") ?? string.Empty;
+    }
+
+    private static bool CanImportPythonVosk(string pythonExe)
+    {
+        try
+        {
+            var args = string.Equals(Path.GetFileName(pythonExe), "py.exe", StringComparison.OrdinalIgnoreCase)
+                ? "-3.9 -c \"import vosk\""
+                : "-c \"import vosk\"";
+            var start = new ProcessStartInfo
+            {
+                FileName = pythonExe,
+                Arguments = args,
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            };
+            using (var process = Process.Start(start))
+            {
+                if (!process.WaitForExit(5000))
+                {
+                    try { process.Kill(); } catch { }
+                    return false;
+                }
+                return process.ExitCode == 0;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string FindOnPath(string executable)
+    {
+        var pathValue = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        foreach (var pathEntry in pathValue.Split(new[] { Path.PathSeparator }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = pathEntry.Trim('"');
+            var candidate = Path.Combine(trimmed, executable);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private static void WaitForMemoryDataService()
+    {
+        for (var i = 0; i < 40; i++)
+        {
+            if (ProbeMemoryDataService()) return;
+            if (memoryDataServiceProcess != null && memoryDataServiceProcess.HasExited)
+            {
+                throw new InvalidOperationException("Memory data service exited before it became ready.");
+            }
+            Thread.Sleep(125);
+        }
+        throw new InvalidOperationException("Memory data service did not become ready.");
+    }
+
+    private static bool ProbeMemoryDataService()
+    {
+        try
+        {
+            var request = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + MemoryDataServicePort + "/healthz");
+            request.Method = "GET";
+            request.Timeout = 500;
+            request.ReadWriteTimeout = 500;
+            using (var response = (HttpWebResponse)request.GetResponse())
+            {
+                if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300) return false;
+                using (var reader = new StreamReader(response.GetResponseStream() ?? Stream.Null, Encoding.UTF8))
+                {
+                    var body = reader.ReadToEnd();
+                    var health = Json.DeserializeObject(body) as Dictionary<string, object>;
+                    if (health == null || !GetBoolean(health, "sqliteReady", false)) return false;
+                    if (!string.Equals(GetString(health, "service"), "yachiyo-memory-data", StringComparison.Ordinal)) return false;
+                    var reportedRoot = GetString(health, "repoRoot");
+                    if (string.IsNullOrWhiteSpace(reportedRoot)) return false;
+                    var expectedRoot = Path.GetFullPath(repoRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    var actualRoot = Path.GetFullPath(reportedRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    return string.Equals(expectedRoot, actualRoot, StringComparison.OrdinalIgnoreCase);
+                }
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private enum MemoryDataServiceListenerKind
+    {
+        None,
+        OwnedByCurrentProject,
+        ForeignProject,
+        Unrelated
+    }
+
+    private static MemoryDataServiceListenerKind ProbeMemoryDataServiceListener()
+    {
+        try
+        {
+            var request = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + MemoryDataServicePort + "/healthz");
+            request.Method = "GET";
+            request.Timeout = 500;
+            request.ReadWriteTimeout = 500;
+            using (var response = (HttpWebResponse)request.GetResponse())
+            {
+                if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300)
+                {
+                    return MemoryDataServiceListenerKind.None;
+                }
+                using (var reader = new StreamReader(response.GetResponseStream() ?? Stream.Null, Encoding.UTF8))
+                {
+                    var health = Json.DeserializeObject(reader.ReadToEnd()) as Dictionary<string, object>;
+                    if (health == null ||
+                        !string.Equals(GetString(health, "service"), "yachiyo-memory-data", StringComparison.Ordinal))
+                    {
+                        return MemoryDataServiceListenerKind.Unrelated;
+                    }
+                    var reportedRoot = GetString(health, "repoRoot");
+                    if (string.IsNullOrWhiteSpace(reportedRoot))
+                    {
+                        return MemoryDataServiceListenerKind.Unrelated;
+                    }
+                    var expectedRoot = Path.GetFullPath(repoRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    var actualRoot = Path.GetFullPath(reportedRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    return string.Equals(expectedRoot, actualRoot, StringComparison.OrdinalIgnoreCase)
+                        ? MemoryDataServiceListenerKind.OwnedByCurrentProject
+                        : MemoryDataServiceListenerKind.ForeignProject;
+                }
+            }
+        }
+        catch
+        {
+            return MemoryDataServiceListenerKind.None;
+        }
+    }
+
+    public static StudioApiResponse MemorySearch(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            if (UsesMemoryDataProvider(input)) return ProxyMemoryDataService("/api/memory/search", body);
+            var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
+            var query = GetObject(input, "query") ?? new Dictionary<string, object>();
+            var queryText = GetString(query, "text");
+            var queryTags = ToLowerSet(GetArray(query, "tags"));
+            var queryKeywords = ToLowerSet(GetArray(query, "keywords"));
+            foreach (var keyword in ExtractSearchTerms(queryText))
+            {
+                if (!queryKeywords.Contains(keyword)) queryKeywords.Add(keyword);
+            }
+            var preferredTypes = ToLowerSet(GetArray(query, "preferredTypes"));
+            var retrievalMode = SanitizeMemoryToken(GetString(query, "retrievalMode"), "tags");
+            var maxNotes = (int)Math.Round(GetDouble(query, "maxNotes", 3, 1, 8));
+            if (retrievalMode == "off")
+            {
+                return JsonOk(new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "notes", new List<object>() }
+                });
+            }
+            var notes = SearchMemoryNotes(vaultPath, queryText, queryTags, queryKeywords, preferredTypes, maxNotes, retrievalMode);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "notes", notes }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse MemoryDataRoute(string route, byte[] body)
+    {
+        if (string.IsNullOrWhiteSpace(route) || !route.StartsWith("/api/memory/", StringComparison.OrdinalIgnoreCase))
+        {
+            return JsonError(404, "Unknown memory route.");
+        }
+        return ProxyMemoryDataService(route, body);
+    }
+
+    public static StudioApiResponse MemoryWrite(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            if (UsesMemoryDataProvider(input)) return ProxyMemoryDataService("/api/memory/write", body);
+            var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
+            var mode = GetString(input, "mode").ToLowerInvariant();
+            if (mode == "off")
+            {
+                return JsonOk(new Dictionary<string, object> { { "success", false }, { "message", "Memory write is off." } });
+            }
+            var memory = GetObject(input, "memory");
+            if (memory == null)
+            {
+                return JsonError(400, "Memory payload is required.");
+            }
+            var text = LimitText(GetString(memory, "text"), MaxMemoryWriteChars);
+            var title = SanitizeMemoryTitle(GetString(memory, "title"));
+            var type = SanitizeMemoryToken(GetString(memory, "type"), "session");
+            var scope = SanitizeMemoryToken(GetString(memory, "scope"), "session");
+            if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(title))
+            {
+                return JsonError(400, "Memory title and text are required.");
+            }
+            if (LooksUnsafeMemoryText(title + "\n" + text))
+            {
+                return JsonError(400, "Memory payload looks sensitive and was rejected.");
+            }
+
+            var tagList = ToLowerSet(GetArray(memory, "tags"));
+            var importance = GetDouble(memory, "importance", 0.45, 0, 1);
+            var confidence = GetDouble(memory, "confidence", 0.65, 0, 1);
+            string relativePath;
+            var approved = false;
+            if (mode == "auto-approved" && !RequiresMemoryReview(type, scope))
+            {
+                relativePath = WriteApprovedMemory(vaultPath, title, type, scope, text, importance, confidence, tagList);
+                approved = true;
+            }
+            else
+            {
+                var reviewReason = mode == "auto-approved"
+                    ? "canonical or policy memory requires manual review"
+                    : string.Empty;
+                relativePath = AppendInboxMemory(vaultPath, reviewReason.Length > 0 ? "pending-review.md" : "pending-memory.md", title, type, scope, text, importance, confidence, tagList, reviewReason);
+            }
+            InvalidateMemoryIndex(vaultPath);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "approved", approved },
+                { "path", relativePath }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse MemoryInit(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            if (UsesMemoryDataProvider(input)) return ProxyMemoryDataService("/api/memory/init", body);
+            var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"), true);
+            var created = EnsureMemoryVaultStructure(vaultPath);
+            var notes = BuildMemoryIndex(vaultPath);
+            var indexPath = SafeCombineMemoryPath(vaultPath, MemoryIndexRelativePath, true);
+            TryWriteMemoryIndex(indexPath, notes);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "vaultPath", vaultPath },
+                { "created", created },
+                { "indexed", notes.Count },
+                { "indexPath", MemoryIndexRelativePath }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse MemoryReindex(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            if (UsesMemoryDataProvider(input)) return ProxyMemoryDataService("/api/memory/reindex", body);
+            var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
+            var notes = BuildMemoryIndex(vaultPath);
+            var indexPath = SafeCombineMemoryPath(vaultPath, MemoryIndexRelativePath, true);
+            TryWriteMemoryIndex(indexPath, notes);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "indexed", notes.Count },
+                { "indexPath", MemoryIndexRelativePath }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse MemoryList(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            if (UsesMemoryDataProvider(input)) return ProxyMemoryDataService("/api/memory/list", body);
+            var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
+            var includeDisabled = GetBoolean(input, "includeDisabled", false);
+            var maxNotes = (int)Math.Round(GetDouble(input, "maxNotes", 200, 1, 1000));
+            var notes = ListMemoryNotes(vaultPath, includeDisabled, maxNotes);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "notes", notes }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse MemoryDisable(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            if (UsesMemoryDataProvider(input)) return ProxyMemoryDataService("/api/memory/disable", body);
+            var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
+            var relativePath = NormalizeMemoryNotePath(vaultPath, GetString(input, "path"), true);
+            var disabled = GetBoolean(input, "disabled", true);
+            var disabledPaths = ReadDisabledMemoryPaths(vaultPath);
+            if (disabled)
+            {
+                if (!disabledPaths.Contains(relativePath)) disabledPaths.Add(relativePath);
+            }
+            else
+            {
+                disabledPaths.RemoveAll(path => string.Equals(path, relativePath, StringComparison.OrdinalIgnoreCase));
+            }
+            WriteDisabledMemoryPaths(vaultPath, disabledPaths);
+            InvalidateMemoryIndex(vaultPath);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "path", relativePath },
+                { "disabled", disabled }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    public static StudioApiResponse MemoryDelete(byte[] body)
+    {
+        try
+        {
+            var input = ParseObject(body);
+            if (UsesMemoryDataProvider(input)) return ProxyMemoryDataService("/api/memory/delete", body);
+            var vaultPath = ValidateMemoryVaultPath(GetString(input, "vaultPath"));
+            var relativePath = NormalizeMemoryNotePath(vaultPath, GetString(input, "path"), true);
+            var fullPath = SafeCombineMemoryPath(vaultPath, relativePath, false);
+            var deletedRelativePath = MoveDeletedMemoryNote(vaultPath, fullPath);
+            var disabledPaths = ReadDisabledMemoryPaths(vaultPath);
+            disabledPaths.RemoveAll(path => string.Equals(path, relativePath, StringComparison.OrdinalIgnoreCase));
+            WriteDisabledMemoryPaths(vaultPath, disabledPaths);
+            InvalidateMemoryIndex(vaultPath);
+            return JsonOk(new Dictionary<string, object>
+            {
+                { "success", true },
+                { "path", relativePath },
+                { "deletedPath", deletedRelativePath }
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonError(400, ex.Message);
+        }
+    }
+
+    private static Dictionary<string, object> ParseObject(byte[] body)
+    {
+        var text = Encoding.UTF8.GetString(body ?? new byte[0]);
+        return DeserializeObject(text);
+    }
+
+    private static Dictionary<string, object> DeserializeObject(string text)
+    {
+        var data = Json.DeserializeObject(text ?? "{}") as Dictionary<string, object>;
+        return data ?? new Dictionary<string, object>();
+    }
+
+    private static string GetString(Dictionary<string, object> data, string key)
+    {
+        object value;
+        return data != null && data.TryGetValue(key, out value) && value != null ? Convert.ToString(value).Trim() : string.Empty;
+    }
+
+    private static object[] GetArray(Dictionary<string, object> data, string key)
+    {
+        object value;
+        if (data == null || !data.TryGetValue(key, out value) || value == null) return null;
+        var array = value as object[];
+        if (array != null) return array;
+        var text = value as string;
+        if (text != null) return text.Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        var enumerable = value as System.Collections.IEnumerable;
+        if (enumerable == null) return null;
+        var result = new List<object>();
+        foreach (var item in enumerable)
+        {
+            result.Add(item);
+        }
+        return result.ToArray();
+    }
+
+    private static Dictionary<string, object> GetObject(Dictionary<string, object> data, string key)
+    {
+        object value;
+        return data != null && data.TryGetValue(key, out value) ? value as Dictionary<string, object> : null;
+    }
+
+    private static double GetDouble(Dictionary<string, object> data, string key, double fallback, double min, double max)
+    {
+        object value;
+        if (data == null || !data.TryGetValue(key, out value) || value == null)
+        {
+            return fallback;
+        }
+        double numeric;
+        if (!double.TryParse(Convert.ToString(value), out numeric))
+        {
+            return fallback;
+        }
+        if (numeric < min) return min;
+        if (numeric > max) return max;
+        return numeric;
+    }
+
+    private static int GetInt(Dictionary<string, object> data, string key)
+    {
+        object value;
+        if (data == null || !data.TryGetValue(key, out value) || value == null)
+        {
+            return 0;
+        }
+        int parsed;
+        if (int.TryParse(Convert.ToString(value), out parsed)) return parsed;
+        double numeric;
+        return double.TryParse(Convert.ToString(value), out numeric) ? (int)Math.Round(numeric) : 0;
+    }
+
+    private static bool GetBoolean(Dictionary<string, object> data, string key, bool fallback)
+    {
+        object value;
+        if (data == null || !data.TryGetValue(key, out value) || value == null)
+        {
+            return fallback;
+        }
+        if (value is bool)
+        {
+            return (bool)value;
+        }
+        var text = Convert.ToString(value).Trim();
+        bool parsed;
+        return bool.TryParse(text, out parsed) ? parsed : fallback;
+    }
+
+    private static string ValidateMemoryVaultPath(string vaultPath, bool allowCreate = false)
+    {
+        if (string.IsNullOrWhiteSpace(vaultPath))
+        {
+            throw new InvalidOperationException("Obsidian vault path is required.");
+        }
+        var fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(vaultPath.Trim()));
+        var root = (Path.GetPathRoot(fullPath) ?? string.Empty).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalized = fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (root.Length > 0 && string.Equals(root, normalized, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Obsidian vault path cannot be a drive root.");
+        }
+        if (!Directory.Exists(fullPath))
+        {
+            if (!allowCreate)
+            {
+                throw new InvalidOperationException("Obsidian vault path does not exist.");
+            }
+            Directory.CreateDirectory(fullPath);
+        }
+        return fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    private static string SafeCombineMemoryPath(string vaultPath, string relativePath, bool forWrite)
+    {
+        var safeRelative = (relativePath ?? string.Empty).Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var fullPath = Path.GetFullPath(Path.Combine(vaultPath, safeRelative));
+        var root = vaultPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Invalid memory path.");
+        }
+        var normalized = fullPath.ToLowerInvariant();
+        if (normalized.IndexOf(Path.DirectorySeparatorChar + ".obsidian" + Path.DirectorySeparatorChar + "plugins" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            throw new InvalidOperationException("Writing Obsidian plugins is not allowed.");
+        }
+        if (forWrite)
+        {
+            var extension = Path.GetExtension(fullPath).ToLowerInvariant();
+            if (extension != ".md" && extension != ".json")
+            {
+                throw new InvalidOperationException("Memory writes only allow .md and .json files.");
+            }
+        }
+        return fullPath;
+    }
+
+    private static List<string> ToLowerSet(object[] values)
+    {
+        var result = new List<string>();
+        if (values == null) return result;
+        foreach (var value in values)
+        {
+            var text = Convert.ToString(value ?? string.Empty).Trim().TrimStart('#').ToLowerInvariant();
+            if (text.Length < 1 || result.Contains(text)) continue;
+            result.Add(text);
+        }
+        return result;
+    }
+
+    private static List<string> ExtractSearchTerms(string text)
+    {
+        var result = new List<string>();
+        var value = (text ?? string.Empty).ToLowerInvariant();
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(value, @"[\u3400-\u9fff]{2,}|[a-z0-9][a-z0-9_-]{2,}", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            var token = match.Value.Trim();
+            if (token.Length > 0 && !result.Contains(token)) result.Add(token);
+            if (result.Count >= 12) break;
+        }
+        return result;
+    }
+
+    private static string LimitText(string text, int maxLength)
+    {
+        var value = (text ?? string.Empty).Trim();
+        return value.Length <= maxLength ? value : value.Substring(0, maxLength);
+    }
+
+    private static string SanitizeMemoryToken(string text, string fallback)
+    {
+        var value = System.Text.RegularExpressions.Regex.Replace((text ?? string.Empty).Trim().ToLowerInvariant(), @"[^a-z0-9_-]+", "_").Trim('_');
+        return string.IsNullOrWhiteSpace(value) ? fallback : value.Substring(0, Math.Min(value.Length, 40));
+    }
+
+    private static string SanitizeMemoryTitle(string text)
+    {
+        var value = System.Text.RegularExpressions.Regex.Replace((text ?? string.Empty).Trim(), @"[\r\n\\/:*?""<>|]+", " ");
+        value = System.Text.RegularExpressions.Regex.Replace(value, @"\s+", " ").Trim();
+        return value.Length <= 90 ? value : value.Substring(0, 90);
+    }
+
+    private static string JoinTags(object[] values)
+    {
+        var tags = ToLowerSet(values);
+        return string.Join(", ", tags.ToArray());
+    }
+
+    private static string JoinTags(List<string> tags)
+    {
+        return string.Join(", ", (tags ?? new List<string>()).ToArray());
+    }
+
+    private static bool LooksUnsafeMemoryText(string text)
+    {
+        return RegexContains(text, @"api[_ -]?key|token|password|passwd|secret|bearer\s+[a-z0-9._-]+|sk-[a-z0-9]{16,}|身份证|证件号|真实地址|住址|电话|手机号");
+    }
+
+    private static bool RequiresMemoryReview(string type, string scope)
+    {
+        return string.Equals(scope, "canon", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(type, "profile", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(type, "style", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(type, "lore", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(type, "policy", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string AppendInboxMemory(string vaultPath, string fileName, string title, string type, string scope, string text, double importance, double confidence, List<string> tags, string reviewReason)
+    {
+        var relativePath = Path.Combine("00_Inbox", fileName);
+        var fullPath = SafeCombineMemoryPath(vaultPath, relativePath, true);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
+        var now = DateTimeOffset.Now.ToString("yyyy-MM-ddTHH:mm:sszzz");
+        var builder = new StringBuilder();
+        builder.AppendLine();
+        builder.Append("## ").AppendLine(now);
+        builder.AppendLine();
+        if (!string.IsNullOrWhiteSpace(reviewReason))
+        {
+            builder.Append("- review_reason: ").AppendLine(reviewReason);
+        }
+        builder.Append("- scope: ").AppendLine(scope);
+        builder.Append("- type: ").AppendLine(type);
+        builder.Append("- title: ").AppendLine(title);
+        builder.Append("- importance: ").AppendLine(importance.ToString("0.##"));
+        builder.Append("- confidence: ").AppendLine(confidence.ToString("0.##"));
+        builder.Append("- tags: ").AppendLine(JoinTags(tags));
+        builder.AppendLine();
+        builder.AppendLine(text);
+        File.AppendAllText(fullPath, builder.ToString(), Encoding.UTF8);
+        return relativePath.Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    private static string WriteApprovedMemory(string vaultPath, string title, string type, string scope, string text, double importance, double confidence, List<string> tags)
+    {
+        var relativePath = ApprovedMemoryRelativePath(type, title);
+        var fullPath = SafeCombineMemoryPath(vaultPath, relativePath, true);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
+        var now = DateTimeOffset.Now.ToString("yyyy-MM-ddTHH:mm:sszzz");
+        if (!File.Exists(fullPath))
+        {
+            var builder = new StringBuilder();
+            builder.AppendLine("---");
+            builder.Append("type: ").AppendLine(type);
+            builder.Append("character: ").AppendLine("yachiyo");
+            builder.Append("scope: ").AppendLine(scope);
+            builder.Append("importance: ").AppendLine(importance.ToString("0.##"));
+            builder.Append("confidence: ").AppendLine(confidence.ToString("0.##"));
+            builder.Append("updated: ").AppendLine(now);
+            AppendYamlTags(builder, tags);
+            builder.AppendLine("---");
+            builder.AppendLine();
+            builder.Append("# ").AppendLine(ApprovedMemoryTitle(type, title));
+            builder.AppendLine();
+            builder.AppendLine("## Entries");
+            builder.AppendLine();
+            builder.Append("### ").AppendLine(now);
+            builder.AppendLine();
+            builder.AppendLine(text);
+            File.WriteAllText(fullPath, builder.ToString(), Encoding.UTF8);
+        }
+        else
+        {
+            var builder = new StringBuilder();
+            builder.AppendLine();
+            builder.Append("## ").AppendLine(now);
+            builder.AppendLine();
+            builder.AppendLine(text);
+            File.AppendAllText(fullPath, builder.ToString(), Encoding.UTF8);
+        }
+        return relativePath.Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    private static string ApprovedMemoryTitle(string type, string title)
+    {
+        if (string.Equals(type, "session", StringComparison.OrdinalIgnoreCase))
+        {
+            return DateTimeOffset.Now.ToString("yyyy-MM-dd") + " Session Memory";
+        }
+        return SanitizeMemoryTitle(title);
+    }
+
+    private static string ApprovedMemoryRelativePath(string type, string title)
+    {
+        var fileName = SlugifyMemoryFileName(title) + ".md";
+        if (string.Equals(type, "viewer", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!fileName.StartsWith("viewer-", StringComparison.OrdinalIgnoreCase)) fileName = "viewer-" + fileName;
+            return Path.Combine("03_Viewers", fileName);
+        }
+        if (string.Equals(type, "session", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine("04_Sessions", DateTimeOffset.Now.ToString("yyyy-MM-dd") + ".md");
+        }
+        if (string.Equals(type, "joke", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine("05_Running_Jokes", fileName);
+        }
+        if (string.Equals(type, "scene", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine("06_Scenes", fileName);
+        }
+        if (string.Equals(type, "sample", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine("07_Samples", fileName);
+        }
+        return Path.Combine("08_System", fileName);
+    }
+
+    private static string SlugifyMemoryFileName(string title)
+    {
+        var safe = SanitizeMemoryTitle(title).ToLowerInvariant();
+        var slug = System.Text.RegularExpressions.Regex.Replace(safe, @"[^a-z0-9\u3400-\u9fff]+", "-").Trim('-');
+        if (string.IsNullOrWhiteSpace(slug)) slug = "memory";
+        return slug.Length <= 70 ? slug : slug.Substring(0, 70).Trim('-');
+    }
+
+    private static void AppendYamlTags(StringBuilder builder, List<string> tags)
+    {
+        builder.AppendLine("tags:");
+        var usable = tags ?? new List<string>();
+        if (usable.Count == 0)
+        {
+            builder.AppendLine("  - memory");
+            return;
+        }
+        foreach (var tag in usable)
+        {
+            builder.Append("  - ").AppendLine(SanitizeMemoryToken(tag, "memory"));
+        }
+    }
+
+    private static int EnsureMemoryVaultStructure(string vaultPath)
+    {
+        var created = 0;
+        var directories = new[]
+        {
+            "00_Inbox",
+            "01_Profile",
+            "02_Lore",
+            "03_Viewers",
+            "04_Sessions",
+            "05_Running_Jokes",
+            "06_Scenes",
+            "07_Samples",
+            "08_System"
+        };
+        foreach (var directory in directories)
+        {
+            var path = SafeCombineMemoryPath(vaultPath, directory, false);
+            if (!Directory.Exists(path))
+            {
+                Directory.CreateDirectory(path);
+                created += 1;
+            }
+        }
+
+        var templates = new Dictionary<string, string>();
+        templates[Path.Combine("00_Inbox", "pending-memory.md")] = "# Pending Memory\n\nRuntime memory proposals are appended here for manual review.\n";
+        templates[Path.Combine("00_Inbox", "pending-review.md")] = "# Pending Review\n\nCanon, profile, lore, policy, or conflict-prone memory proposals are appended here.\n";
+        templates[Path.Combine("01_Profile", "Yachiyo.md")] = BuildMemoryTemplate("Yachiyo", "profile", "canon", "TODO: Add character profile after the architecture is stable.", "profile", "yachiyo");
+        templates[Path.Combine("01_Profile", "Speech Style.md")] = BuildMemoryTemplate("Speech Style", "style", "canon", "TODO: Add speech style rules after the architecture is stable.", "style", "yachiyo");
+        templates[Path.Combine("01_Profile", "Values.md")] = BuildMemoryTemplate("Values", "profile", "canon", "TODO: Add values after the architecture is stable.", "values", "yachiyo");
+        templates[Path.Combine("01_Profile", "Boundaries.md")] = BuildMemoryTemplate("Boundaries", "policy", "canon", "TODO: Add boundaries after the architecture is stable.", "boundaries", "yachiyo");
+        templates[Path.Combine("02_Lore", "Tsukuyomi.md")] = BuildMemoryTemplate("Tsukuyomi", "lore", "canon", "TODO: Add lore after the architecture is stable.", "lore");
+        templates[Path.Combine("02_Lore", "Iroha.md")] = BuildMemoryTemplate("Iroha", "lore", "canon", "TODO: Add lore after the architecture is stable.", "lore");
+        templates[Path.Combine("02_Lore", "Kaguya.md")] = BuildMemoryTemplate("Kaguya", "lore", "canon", "TODO: Add lore after the architecture is stable.", "lore");
+        templates[Path.Combine("02_Lore", "Fushi.md")] = BuildMemoryTemplate("Fushi", "lore", "canon", "TODO: Add lore after the architecture is stable.", "lore");
+        templates[Path.Combine("02_Lore", "Moon People.md")] = BuildMemoryTemplate("Moon People", "lore", "canon", "TODO: Add lore after the architecture is stable.", "lore");
+        templates[Path.Combine("02_Lore", "Abnormal Entities.md")] = BuildMemoryTemplate("Abnormal Entities", "lore", "canon", "TODO: Add lore after the architecture is stable.", "lore");
+        templates[Path.Combine("03_Viewers", "_template.md")] = BuildMemoryTemplate("Viewer Template", "viewer", "relationship", "Use this file as a template for manually curated viewer notes.", "viewer");
+        templates[Path.Combine("04_Sessions", "_template.md")] = BuildMemoryTemplate("Session Template", "session", "session", "Use this file as a template for manually curated session summaries.", "session");
+        templates[Path.Combine("05_Running_Jokes", "_template.md")] = BuildMemoryTemplate("Running Joke Template", "joke", "long_term", "Use this file as a template for confirmed running jokes.", "running-joke");
+        templates[Path.Combine("06_Scenes", "Stage Fright.md")] = BuildMemoryTemplate("Stage Fright", "scene", "long_term", "TODO: Add scene handling after the architecture is stable.", "scene", "stage-fright");
+        templates[Path.Combine("06_Scenes", "Secret Question.md")] = BuildMemoryTemplate("Secret Question", "scene", "long_term", "TODO: Add scene handling after the architecture is stable.", "scene");
+        templates[Path.Combine("06_Scenes", "TTS Failure.md")] = BuildMemoryTemplate("TTS Failure", "scene", "long_term", "TODO: Add scene handling after the architecture is stable.", "scene", "tts");
+        templates[Path.Combine("06_Scenes", "VTS Disconnected.md")] = BuildMemoryTemplate("VTS Disconnected", "scene", "long_term", "TODO: Add scene handling after the architecture is stable.", "scene", "vts");
+        templates[Path.Combine("06_Scenes", "First Login.md")] = BuildMemoryTemplate("First Login", "scene", "long_term", "TODO: Add scene handling after the architecture is stable.", "scene");
+        templates[Path.Combine("07_Samples", "Gentle Support Samples.md")] = BuildMemoryTemplate("Gentle Support Samples", "sample", "long_term", "TODO: Add curated samples after the architecture is stable.", "sample");
+        templates[Path.Combine("07_Samples", "Mysterious Samples.md")] = BuildMemoryTemplate("Mysterious Samples", "sample", "long_term", "TODO: Add curated samples after the architecture is stable.", "sample");
+        templates[Path.Combine("07_Samples", "Casual Live Samples.md")] = BuildMemoryTemplate("Casual Live Samples", "sample", "long_term", "TODO: Add curated samples after the architecture is stable.", "sample", "live-stream");
+        templates[Path.Combine("08_System", "Memory Policy.md")] = BuildMemoryTemplate("Memory Policy", "policy", "canon", "TODO: Add memory policy after the architecture is stable.", "policy", "memory");
+        templates[Path.Combine("08_System", "Retrieval Rules.md")] = BuildMemoryTemplate("Retrieval Rules", "policy", "canon", "TODO: Add retrieval rules after the architecture is stable.", "policy", "retrieval");
+        templates[Path.Combine("08_System", "Prompt Fragments.md")] = BuildMemoryTemplate("Prompt Fragments", "policy", "canon", "TODO: Add prompt fragments after the architecture is stable.", "policy", "prompt");
+        MergeMemorySeedTemplates(templates);
+
+        foreach (var entry in templates)
+        {
+            var path = SafeCombineMemoryPath(vaultPath, entry.Key, true);
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            if (File.Exists(path) && !CanReplaceMemoryPlaceholder(path)) continue;
+            File.WriteAllText(path, entry.Value, Encoding.UTF8);
+            created += 1;
+        }
+        return created;
+    }
+
+    private static void MergeMemorySeedTemplates(Dictionary<string, string> templates)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot)) return;
+        var seedRoot = Path.GetFullPath(Path.Combine(repoRoot, "memory-seeds", "obsidian"));
+        if (!Directory.Exists(seedRoot)) return;
+        var root = seedRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        foreach (var file in Directory.GetFiles(seedRoot, "*.md", SearchOption.AllDirectories))
+        {
+            var fullPath = Path.GetFullPath(file);
+            if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
+            var relativePath = fullPath.Substring(root.Length);
+            templates[relativePath] = File.ReadAllText(fullPath, Encoding.UTF8);
+        }
+    }
+
+    private static bool CanReplaceMemoryPlaceholder(string path)
+    {
+        try
+        {
+            var text = File.ReadAllText(path, Encoding.UTF8);
+            return text.IndexOf("TODO: Add ", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   text.IndexOf("after the architecture is stable", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string BuildMemoryTemplate(string title, string type, string scope, string body, params string[] tags)
+    {
+        var now = DateTimeOffset.Now.ToString("yyyy-MM-ddTHH:mm:sszzz");
+        var builder = new StringBuilder();
+        builder.AppendLine("---");
+        builder.Append("type: ").AppendLine(type);
+        builder.AppendLine("character: yachiyo");
+        builder.Append("scope: ").AppendLine(scope);
+        builder.AppendLine("importance: 0.4");
+        builder.AppendLine("confidence: 0.7");
+        builder.Append("updated: ").AppendLine(now);
+        AppendYamlTags(builder, new List<string>(tags));
+        builder.AppendLine("---");
+        builder.AppendLine();
+        builder.Append("# ").AppendLine(title);
+        builder.AppendLine();
+        builder.AppendLine(body);
+        return builder.ToString();
+    }
+
+    private static string NormalizeMemoryNotePath(string vaultPath, string relativePath, bool mustExist)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            throw new InvalidOperationException("Memory note path is required.");
+        }
+        var fullPath = SafeCombineMemoryPath(vaultPath, relativePath, false);
+        if (!string.Equals(Path.GetExtension(fullPath), ".md", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Memory note path must point to a markdown file.");
+        }
+        if (IsIgnoredMemoryPath(fullPath))
+        {
+            throw new InvalidOperationException("Memory inbox, index, trash, and Obsidian internals cannot be managed as active memory.");
+        }
+        if (mustExist && !File.Exists(fullPath))
+        {
+            throw new InvalidOperationException("Memory note does not exist.");
+        }
+        return fullPath.Substring(vaultPath.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    private static List<string> ReadDisabledMemoryPaths(string vaultPath)
+    {
+        try
+        {
+            var path = SafeCombineMemoryPath(vaultPath, DisabledMemoryRelativePath, true);
+            if (!File.Exists(path)) return new List<string>();
+            var raw = Json.DeserializeObject(File.ReadAllText(path, Encoding.UTF8)) as object[];
+            var result = new List<string>();
+            if (raw == null) return result;
+            foreach (var item in raw)
+            {
+                var relativePath = Convert.ToString(item ?? string.Empty).Trim().Replace('\\', '/');
+                if (relativePath.Length < 1 || result.Contains(relativePath)) continue;
+                result.Add(relativePath);
+            }
+            return result;
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    private static void WriteDisabledMemoryPaths(string vaultPath, List<string> disabledPaths)
+    {
+        var path = SafeCombineMemoryPath(vaultPath, DisabledMemoryRelativePath, true);
+        Directory.CreateDirectory(Path.GetDirectoryName(path));
+        var normalized = new List<object>();
+        foreach (var item in disabledPaths ?? new List<string>())
+        {
+            var relativePath = item.Replace('\\', '/').Trim();
+            if (relativePath.Length < 1 || normalized.Contains(relativePath)) continue;
+            normalized.Add(relativePath);
+        }
+        File.WriteAllText(path, Json.Serialize(normalized), Encoding.UTF8);
+    }
+
+    private static bool IsDisabledMemoryPath(List<string> disabledPaths, string relativePath)
+    {
+        foreach (var path in disabledPaths ?? new List<string>())
+        {
+            if (string.Equals(path, relativePath, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    private static string MoveDeletedMemoryNote(string vaultPath, string fullPath)
+    {
+        var deletedDir = SafeCombineMemoryPath(vaultPath, Path.Combine("00_Inbox", "deleted"), false);
+        Directory.CreateDirectory(deletedDir);
+        var fileName = DateTimeOffset.Now.ToString("yyyyMMddHHmmss") + "-" + Path.GetFileName(fullPath);
+        var destination = SafeCombineMemoryPath(vaultPath, Path.Combine("00_Inbox", "deleted", fileName), true);
+        var counter = 1;
+        while (File.Exists(destination))
+        {
+            fileName = DateTimeOffset.Now.ToString("yyyyMMddHHmmss") + "-" + counter + "-" + Path.GetFileName(fullPath);
+            destination = SafeCombineMemoryPath(vaultPath, Path.Combine("00_Inbox", "deleted", fileName), true);
+            counter += 1;
+        }
+        File.Move(fullPath, destination);
+        return destination.Substring(vaultPath.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    private static List<object> ListMemoryNotes(string vaultPath, bool includeDisabled, int maxNotes)
+    {
+        var disabledPaths = ReadDisabledMemoryPaths(vaultPath);
+        var notes = new List<Dictionary<string, object>>();
+        var files = Directory.GetFiles(vaultPath, "*.md", SearchOption.AllDirectories);
+        var scanned = 0;
+        foreach (var file in files)
+        {
+            if (scanned >= MaxMemorySearchFiles || notes.Count >= maxNotes) break;
+            if (IsIgnoredMemoryPath(file)) continue;
+            var info = new FileInfo(file);
+            if (!info.Exists || info.Length > MaxMemoryNoteBytes) continue;
+            scanned += 1;
+            var text = File.ReadAllText(file, Encoding.UTF8);
+            var note = ParseMemoryNote(vaultPath, file, text);
+            var relativePath = GetString(note, "path");
+            var disabled = IsDisabledMemoryPath(disabledPaths, relativePath);
+            if (disabled && !includeDisabled) continue;
+            note["disabled"] = disabled;
+            notes.Add(note);
+        }
+
+        notes.Sort((left, right) => string.Compare(GetString(left, "path"), GetString(right, "path"), StringComparison.OrdinalIgnoreCase));
+        var result = new List<object>();
+        foreach (var note in notes)
+        {
+            result.Add(note);
+        }
+        return result;
+    }
+
+    private static void InvalidateMemoryIndex(string vaultPath)
+    {
+        try
+        {
+            var indexPath = SafeCombineMemoryPath(vaultPath, MemoryIndexRelativePath, true);
+            if (File.Exists(indexPath)) File.Delete(indexPath);
+        }
+        catch
+        {
+            // Index invalidation is a cache concern and must not block memory writes.
+        }
+    }
+
+    private static List<object> SearchMemoryNotes(string vaultPath, string queryText, List<string> queryTags, List<string> queryKeywords, List<string> preferredTypes, int maxNotes, string retrievalMode)
+    {
+        if (string.Equals(retrievalMode, "index", StringComparison.OrdinalIgnoreCase))
+        {
+            return SearchIndexedMemoryNotes(vaultPath, queryText, queryTags, queryKeywords, preferredTypes, maxNotes);
+        }
+        return SearchScannedMemoryNotes(vaultPath, queryText, queryTags, queryKeywords, preferredTypes, maxNotes);
+    }
+
+    private static List<object> SearchScoredMemoryNotes(List<Dictionary<string, object>> notes, string queryText, List<string> queryTags, List<string> queryKeywords, List<string> preferredTypes, int maxNotes)
+    {
+        var scored = new List<Dictionary<string, object>>();
+        foreach (var note in notes)
+        {
+            var score = ScoreMemoryNote(note, queryText, queryTags, queryKeywords, preferredTypes);
+            if (score <= 0.01) continue;
+            note["score"] = score;
+            scored.Add(note);
+        }
+
+        scored.Sort((left, right) => Convert.ToDouble(right["score"]).CompareTo(Convert.ToDouble(left["score"])));
+        var result = new List<object>();
+        for (var i = 0; i < scored.Count && i < maxNotes; i++)
+        {
+            scored[i].Remove("score");
+            result.Add(scored[i]);
+        }
+        return result;
+    }
+
+    private static List<object> SearchScannedMemoryNotes(string vaultPath, string queryText, List<string> queryTags, List<string> queryKeywords, List<string> preferredTypes, int maxNotes)
+    {
+        var notes = new List<Dictionary<string, object>>();
+        var files = Directory.GetFiles(vaultPath, "*.md", SearchOption.AllDirectories);
+        var disabledPaths = ReadDisabledMemoryPaths(vaultPath);
+        var scanned = 0;
+        foreach (var file in files)
+        {
+            if (scanned >= MaxMemorySearchFiles) break;
+            if (IsIgnoredMemoryPath(file)) continue;
+            var info = new FileInfo(file);
+            if (!info.Exists || info.Length > MaxMemoryNoteBytes) continue;
+            scanned += 1;
+            var text = File.ReadAllText(file, Encoding.UTF8);
+            var note = ParseMemoryNote(vaultPath, file, text);
+            if (IsDisabledMemoryPath(disabledPaths, GetString(note, "path"))) continue;
+            notes.Add(note);
+        }
+
+        return SearchScoredMemoryNotes(notes, queryText, queryTags, queryKeywords, preferredTypes, maxNotes);
+    }
+
+    private static List<object> SearchIndexedMemoryNotes(string vaultPath, string queryText, List<string> queryTags, List<string> queryKeywords, List<string> preferredTypes, int maxNotes)
+    {
+        var notes = LoadOrBuildMemoryIndex(vaultPath);
+        return SearchScoredMemoryNotes(notes, queryText, queryTags, queryKeywords, preferredTypes, maxNotes);
+    }
+
+    private static bool IsIgnoredMemoryPath(string path)
+    {
+        var lower = path.ToLowerInvariant();
+        return lower.IndexOf(Path.DirectorySeparatorChar + ".obsidian" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0 ||
+               lower.IndexOf(Path.DirectorySeparatorChar + ".trash" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0 ||
+               lower.IndexOf(Path.DirectorySeparatorChar + ".yachiyo-index" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0 ||
+               lower.IndexOf(Path.DirectorySeparatorChar + "00_inbox" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static List<Dictionary<string, object>> LoadOrBuildMemoryIndex(string vaultPath)
+    {
+        var indexPath = SafeCombineMemoryPath(vaultPath, MemoryIndexRelativePath, true);
+        var disabledPaths = ReadDisabledMemoryPaths(vaultPath);
+        if (IsMemoryIndexFresh(vaultPath, indexPath))
+        {
+            var existing = TryReadMemoryIndex(vaultPath, indexPath, disabledPaths);
+            if (existing != null) return existing;
+        }
+
+        var built = BuildMemoryIndex(vaultPath, disabledPaths);
+        TryWriteMemoryIndex(indexPath, built);
+        return built;
+    }
+
+    private static bool IsMemoryIndexFresh(string vaultPath, string indexPath)
+    {
+        if (!File.Exists(indexPath)) return false;
+        var indexTime = File.GetLastWriteTimeUtc(indexPath);
+        var disabledPath = SafeCombineMemoryPath(vaultPath, DisabledMemoryRelativePath, true);
+        if (File.Exists(disabledPath) && File.GetLastWriteTimeUtc(disabledPath) > indexTime) return false;
+        foreach (var file in Directory.GetFiles(vaultPath, "*.md", SearchOption.AllDirectories))
+        {
+            if (IsIgnoredMemoryPath(file)) continue;
+            if (File.GetLastWriteTimeUtc(file) > indexTime) return false;
+        }
+        return true;
+    }
+
+    private static List<Dictionary<string, object>> TryReadMemoryIndex(string vaultPath, string indexPath, List<string> disabledPaths)
+    {
+        try
+        {
+            var raw = Json.DeserializeObject(File.ReadAllText(indexPath, Encoding.UTF8)) as object[];
+            if (raw == null) return null;
+            var notes = new List<Dictionary<string, object>>();
+            foreach (var item in raw)
+            {
+                var source = item as Dictionary<string, object>;
+                if (source == null) continue;
+                var note = NormalizeMemoryIndexNote(source);
+                var path = GetString(note, "path");
+                if (string.IsNullOrWhiteSpace(path)) continue;
+                if (IsDisabledMemoryPath(disabledPaths, path)) continue;
+                if (!File.Exists(SafeCombineMemoryPath(vaultPath, path, false))) continue;
+                notes.Add(note);
+                if (notes.Count >= MaxMemorySearchFiles) break;
+            }
+            return notes;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static List<Dictionary<string, object>> BuildMemoryIndex(string vaultPath)
+    {
+        return BuildMemoryIndex(vaultPath, ReadDisabledMemoryPaths(vaultPath));
+    }
+
+    private static List<Dictionary<string, object>> BuildMemoryIndex(string vaultPath, List<string> disabledPaths)
+    {
+        var notes = new List<Dictionary<string, object>>();
+        var files = Directory.GetFiles(vaultPath, "*.md", SearchOption.AllDirectories);
+        var scanned = 0;
+        foreach (var file in files)
+        {
+            if (scanned >= MaxMemorySearchFiles) break;
+            if (IsIgnoredMemoryPath(file)) continue;
+            var info = new FileInfo(file);
+            if (!info.Exists || info.Length > MaxMemoryNoteBytes) continue;
+            scanned += 1;
+            var text = File.ReadAllText(file, Encoding.UTF8);
+            var note = ParseMemoryNote(vaultPath, file, text);
+            if (IsDisabledMemoryPath(disabledPaths, GetString(note, "path"))) continue;
+            notes.Add(note);
+        }
+        return notes;
+    }
+
+    private static void TryWriteMemoryIndex(string indexPath, List<Dictionary<string, object>> notes)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(indexPath));
+            var payload = new List<object>();
+            foreach (var note in notes)
+            {
+                payload.Add(NormalizeMemoryIndexNote(note));
+            }
+            File.WriteAllText(indexPath, Json.Serialize(payload), Encoding.UTF8);
+        }
+        catch
+        {
+            // The app can always fall back to direct markdown scanning.
+        }
+    }
+
+    private static Dictionary<string, object> NormalizeMemoryIndexNote(Dictionary<string, object> note)
+    {
+        return new Dictionary<string, object>
+        {
+            { "path", GetString(note, "path") },
+            { "title", GetString(note, "title") },
+            { "type", GetString(note, "type") },
+            { "scope", GetString(note, "scope") },
+            { "tags", ToLowerSet(GetArray(note, "tags")) },
+            { "importance", GetDouble(note, "importance", 0.45, 0, 1) },
+            { "confidence", GetDouble(note, "confidence", 0.65, 0, 1) },
+            { "updated", GetString(note, "updated") },
+            { "summary", LimitText(GetString(note, "summary"), 360) },
+            { "content", LimitText(GetString(note, "content"), 1200) }
+        };
+    }
+
+    private static Dictionary<string, object> ParseMemoryNote(string vaultPath, string filePath, string markdown)
+    {
+        var text = (markdown ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+        var frontmatter = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        var content = text;
+        if (text.StartsWith("---\n", StringComparison.Ordinal))
+        {
+            var end = text.IndexOf("\n---\n", 4, StringComparison.Ordinal);
+            if (end > 0)
+            {
+                frontmatter = ParseYamlFrontmatter(text.Substring(4, end - 4));
+                content = text.Substring(end + 5);
+            }
+        }
+        var relativePath = filePath.Substring(vaultPath.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace(Path.DirectorySeparatorChar, '/');
+        var tags = GetFrontmatterTags(frontmatter);
+        var title = ExtractMarkdownTitle(content);
+        if (string.IsNullOrWhiteSpace(title)) title = Path.GetFileNameWithoutExtension(filePath);
+        var summary = GetFrontmatterString(frontmatter, "summary");
+        if (string.IsNullOrWhiteSpace(summary)) summary = BuildMemorySummary(content);
+        return new Dictionary<string, object>
+        {
+            { "path", relativePath },
+            { "title", title },
+            { "type", GetFrontmatterString(frontmatter, "type") },
+            { "scope", GetFrontmatterString(frontmatter, "scope") },
+            { "tags", tags },
+            { "importance", GetFrontmatterDouble(frontmatter, "importance", 0.45) },
+            { "confidence", GetFrontmatterDouble(frontmatter, "confidence", 0.65) },
+            { "updated", GetFrontmatterString(frontmatter, "updated") },
+            { "summary", LimitText(summary, 360) },
+            { "content", LimitText(StripMarkdown(content), 1200) }
+        };
+    }
+
+    private static Dictionary<string, object> ParseYamlFrontmatter(string yaml)
+    {
+        var data = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        var currentListKey = string.Empty;
+        foreach (var rawLine in (yaml ?? string.Empty).Split('\n'))
+        {
+            var line = rawLine.TrimEnd();
+            if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith("#", StringComparison.Ordinal)) continue;
+            var trimmed = line.Trim();
+            if (!string.IsNullOrEmpty(currentListKey) && trimmed.StartsWith("-", StringComparison.Ordinal))
+            {
+                var list = data[currentListKey] as List<string>;
+                if (list != null) list.Add(trimmed.Substring(1).Trim().Trim('"', '\''));
+                continue;
+            }
+            currentListKey = string.Empty;
+            var separator = trimmed.IndexOf(':');
+            if (separator <= 0) continue;
+            var key = trimmed.Substring(0, separator).Trim();
+            var value = trimmed.Substring(separator + 1).Trim();
+            if (value.Length == 0)
+            {
+                data[key] = new List<string>();
+                currentListKey = key;
+            }
+            else
+            {
+                data[key] = value.Trim('"', '\'');
+            }
+        }
+        return data;
+    }
+
+    private static List<string> GetFrontmatterTags(Dictionary<string, object> frontmatter)
+    {
+        object value;
+        if (frontmatter.TryGetValue("tags", out value))
+        {
+            var list = value as List<string>;
+            if (list != null)
+            {
+                var result = new List<string>();
+                foreach (var tag in list)
+                {
+                    var normalized = (tag ?? string.Empty).Trim().TrimStart('#').ToLowerInvariant();
+                    if (normalized.Length > 0 && !result.Contains(normalized)) result.Add(normalized);
+                }
+                return result;
+            }
+            return ToLowerSet(Convert.ToString(value ?? string.Empty).Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries));
+        }
+        return new List<string>();
+    }
+
+    private static string GetFrontmatterString(Dictionary<string, object> frontmatter, string key)
+    {
+        object value;
+        return frontmatter.TryGetValue(key, out value) && value != null ? Convert.ToString(value).Trim() : string.Empty;
+    }
+
+    private static double GetFrontmatterDouble(Dictionary<string, object> frontmatter, string key, double fallback)
+    {
+        object value;
+        if (!frontmatter.TryGetValue(key, out value) || value == null) return fallback;
+        double numeric;
+        return double.TryParse(Convert.ToString(value), out numeric) ? Math.Min(Math.Max(numeric, 0), 1) : fallback;
+    }
+
+    private static string ExtractMarkdownTitle(string markdown)
+    {
+        foreach (var line in (markdown ?? string.Empty).Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith("# ", StringComparison.Ordinal)) return trimmed.Substring(2).Trim();
+        }
+        return string.Empty;
+    }
+
+    private static string StripMarkdown(string markdown)
+    {
+        var value = System.Text.RegularExpressions.Regex.Replace(markdown ?? string.Empty, @"```[\s\S]*?```", " ");
+        value = System.Text.RegularExpressions.Regex.Replace(value, @"^#+\s*", "", System.Text.RegularExpressions.RegexOptions.Multiline);
+        value = System.Text.RegularExpressions.Regex.Replace(value, @"\[\[|\]\]|\*\*|__|`", "");
+        value = System.Text.RegularExpressions.Regex.Replace(value, @"\s+", " ");
+        return value.Trim();
+    }
+
+    private static string BuildMemorySummary(string markdown)
+    {
+        var text = StripMarkdown(markdown);
+        return LimitText(text, 320);
+    }
+
+    private static double ScoreMemoryNote(Dictionary<string, object> note, string queryText, List<string> queryTags, List<string> queryKeywords, List<string> preferredTypes)
+    {
+        var score = 0.0;
+        var type = Convert.ToString(note["type"] ?? string.Empty).ToLowerInvariant();
+        var title = Convert.ToString(note["title"] ?? string.Empty).ToLowerInvariant();
+        var content = (Convert.ToString(note["summary"] ?? string.Empty) + " " + Convert.ToString(note["content"] ?? string.Empty)).ToLowerInvariant();
+        var tags = note["tags"] as List<string> ?? new List<string>();
+        var matched = queryTags.Count == 0 && queryKeywords.Count == 0 && string.IsNullOrWhiteSpace(queryText);
+        foreach (var tag in queryTags)
+        {
+            if (tags.Contains(tag))
+            {
+                score += 3.0;
+                matched = true;
+            }
+        }
+        foreach (var preferredType in preferredTypes)
+        {
+            if (type == preferredType) score += 2.0;
+        }
+        foreach (var keyword in queryKeywords)
+        {
+            if (title.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                score += 2.2;
+                matched = true;
+            }
+            if (content.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                score += 1.4;
+                matched = true;
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(queryText) && content.IndexOf(queryText.ToLowerInvariant(), StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            score += 2.0;
+            matched = true;
+        }
+        if (!matched) return 0.0;
+        score += Convert.ToDouble(note["importance"]) * 2.0;
+        score += Convert.ToDouble(note["confidence"]) * 0.8;
+        score += MemoryUpdatedBoost(Convert.ToString(note["updated"] ?? string.Empty));
+        return score;
+    }
+
+    private static double MemoryUpdatedBoost(string updated)
+    {
+        DateTimeOffset parsed;
+        if (!DateTimeOffset.TryParse(updated, out parsed)) return 0.0;
+        var days = Math.Max(0, (DateTimeOffset.Now - parsed).TotalDays);
+        if (days <= 7) return 0.6;
+        if (days <= 30) return 0.35;
+        if (days <= 90) return 0.15;
+        return 0.0;
+    }
+
+    private static string NormalizeChatUrl(string apiUrl, string model)
+    {
+        var url = (apiUrl ?? string.Empty).Trim();
+        if (RegexContains(url, @"/(chat/completions|responses)/?$"))
+        {
+            return url.TrimEnd('/');
+        }
+        if (RegexContains(url, @"(api\.openai\.com|api\.x\.ai)(/v1)?/?$"))
+        {
+            var parsed = new Uri(url);
+            return parsed.GetLeftPart(UriPartial.Authority).TrimEnd('/') + "/v1/responses";
+        }
+        if (RegexContains(url, @"(xiaomimimo\.com|token-plan-cn\.xiaomimimo\.com)(/v1)?/?$"))
+        {
+            var parsed = new Uri(url);
+            return parsed.GetLeftPart(UriPartial.Authority).TrimEnd('/') + "/v1/chat/completions";
+        }
+        if (RegexContains(url + " " + model, @"deepseek|dashscope|aliyuncs|openai|openrouter|moonshot|kimi|bigmodel|zhipu|siliconflow|volces|ark|groq|mistral|together|perplexity|x\.ai|generativelanguage|xiaomimimo|token-plan-cn") &&
+            !RegexContains(url, @"/(chat/completions|responses)/?$"))
+        {
+            Uri parsed;
+            if (Uri.TryCreate(url, UriKind.Absolute, out parsed))
+            {
+                var path = parsed.AbsolutePath.TrimEnd('/');
+                if (string.IsNullOrEmpty(path) || path == "/")
+                {
+                    return parsed.GetLeftPart(UriPartial.Authority).TrimEnd('/') + "/v1/chat/completions";
+                }
+                if (string.Equals(path, "/v1", StringComparison.OrdinalIgnoreCase))
+                {
+                    return parsed.GetLeftPart(UriPartial.Authority).TrimEnd('/') + "/v1/chat/completions";
+                }
+            }
+            return url.TrimEnd('/') + "/chat/completions";
+        }
+        return url;
+    }
+
+    private static string NormalizeMimoTtsUrl(string apiUrl)
+    {
+        var url = (apiUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return "https://api.xiaomimimo.com/v1/chat/completions";
+        }
+        if (RegexContains(url, @"(xiaomimimo\.com|token-plan-cn\.xiaomimimo\.com)/v1/?$"))
+        {
+            return url.TrimEnd('/') + "/chat/completions";
+        }
+        return url;
+    }
+
+    private static bool RegexContains(string value, string pattern)
+    {
+        return System.Text.RegularExpressions.Regex.IsMatch(value ?? string.Empty, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    private static void ValidateRemoteOrLoopbackUrl(string url)
+    {
+        Uri parsed;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out parsed))
+        {
+            throw new InvalidOperationException("Invalid API URL.");
+        }
+        if (parsed.Scheme == Uri.UriSchemeHttps)
+        {
+            return;
+        }
+        if (parsed.Scheme == Uri.UriSchemeHttp && IsLoopbackHost(parsed.Host))
+        {
+            return;
+        }
+        throw new InvalidOperationException("Only HTTPS remote API URLs or loopback HTTP URLs are allowed.");
+    }
+
+    private static bool IsLoopbackHost(string host)
+    {
+        return string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(host, "127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(host, "::1", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeGptSovitsLang(string value, string fallback)
+    {
+        var raw = (value ?? string.Empty).Trim().ToLowerInvariant().Replace("_", "-");
+        if (raw == "cn" || raw == "zh-cn" || raw == "chinese" || raw == "mandarin") return "zh";
+        if (raw == "jp" || raw == "jpn" || raw == "japanese") return "ja";
+        if (raw == "english") return "en";
+        if (raw == "korean") return "ko";
+        if (raw == "auto") return "auto";
+        if (raw == "zh" || raw == "ja" || raw == "en" || raw == "ko" || raw == "yue") return raw;
+        return fallback;
+    }
+
+    private static string DetectTextLang(string text)
+    {
+        foreach (var ch in text ?? string.Empty)
+        {
+            if (ch >= 0x3040 && ch <= 0x30ff) return "ja";
+            if (ch >= 0xac00 && ch <= 0xd7af) return "ko";
+            if (ch >= 0x4e00 && ch <= 0x9fff) return "zh";
+        }
+        return "en";
+    }
+
+    private static string TtsEmotionInstruction(Dictionary<string, object> input)
+    {
+        var emotion = GetString(input, "emotion");
+        var speechStyle = GetObject(input, "speechStyle");
+        var pause = GetString(speechStyle, "pause");
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(emotion))
+        {
+            parts.Add("Use a " + emotion + " emotional delivery.");
+        }
+        if (!string.IsNullOrWhiteSpace(pause))
+        {
+            parts.Add("Timing style: " + pause + ".");
+        }
+        return parts.Count == 0 ? string.Empty : " " + string.Join(" ", parts);
+    }
+
+    private static string TtsReadInstruction(string text, string textLang, Dictionary<string, object> input)
+    {
+        var lang = NormalizeGptSovitsLang(textLang, "auto");
+        if (lang == "auto")
+        {
+            lang = DetectTextLang(text);
+        }
+        var emotion = TtsEmotionInstruction(input);
+        if (lang == "ja")
+        {
+            return "Read only the following Japanese text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions." + emotion;
+        }
+        if (lang == "ko")
+        {
+            return "Read only the following Korean text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions." + emotion;
+        }
+        if (lang == "zh" || lang == "yue")
+        {
+            return "Read only the following Chinese text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions." + emotion;
+        }
+        return "Read only the following English text in a soft, natural voice. Do not read explanations, translations, action cues, or stage directions." + emotion;
+    }
+
+    private static Dictionary<string, string> ChatHeaders(string apiUrl, string apiKey)
+    {
+        var headers = new Dictionary<string, string> { { "Authorization", "Bearer " + apiKey } };
+        if (RegexContains(apiUrl, @"openrouter\.ai/api/v1/chat/completions/?$"))
+        {
+            headers["HTTP-Referer"] = "http://127.0.0.1";
+            headers["X-OpenRouter-Title"] = "Yachiyo Live2D Studio";
+        }
+        return headers;
+    }
+
+    private static Dictionary<string, object> BuildChatPayload(Dictionary<string, object> input, string apiUrl, string model, string systemPrompt, string message)
+    {
+        var history = new List<object>();
+        var vision = GetObject(input, "vision");
+        var rawHistory = GetArray(input, "conversation");
+        if (rawHistory != null)
+        {
+            foreach (var item in rawHistory)
+            {
+                var line = item as Dictionary<string, object>;
+                if (line == null) continue;
+                var role = GetString(line, "role");
+                if (role != "user" && role != "assistant") continue;
+                history.Add(new Dictionary<string, object> { { "role", role }, { "content", GetString(line, "content") } });
+            }
+        }
+
+        if (RegexContains(apiUrl, @"(api\.openai\.com|api\.x\.ai)/v1/responses/?$"))
+        {
+            var inputList = new List<object>();
+            foreach (var item in history)
+            {
+                inputList.Add(item);
+            }
+            inputList.Add(new Dictionary<string, object> { { "role", "user" }, { "content", BuildVisionUserContent(message, vision, true) } });
+            return new Dictionary<string, object>
+            {
+                { "model", string.IsNullOrWhiteSpace(model) ? "gpt-4o-mini" : model },
+                { "instructions", systemPrompt },
+                { "input", inputList },
+                { "max_output_tokens", 1000 }
+            };
+        }
+
+        var messages = new List<object>();
+        if (!string.IsNullOrWhiteSpace(systemPrompt))
+        {
+            messages.Add(new Dictionary<string, object> { { "role", "system" }, { "content", systemPrompt } });
+        }
+        foreach (var item in history)
+        {
+            messages.Add(item);
+        }
+        messages.Add(new Dictionary<string, object> { { "role", "user" }, { "content", BuildVisionUserContent(message, vision, false) } });
+
+        return new Dictionary<string, object>
+        {
+            { "model", string.IsNullOrWhiteSpace(model) ? "gpt-4o-mini" : model },
+            { "messages", messages },
+            { "temperature", RegexContains(apiUrl + " " + model, @"moonshot|kimi") ? 1 : 0.4 },
+            { "max_tokens", 1000 },
+            { "stream", false }
+        };
+    }
+
+    private static object BuildVisionUserContent(string message, Dictionary<string, object> vision, bool responsesApi)
+    {
+        if (vision == null || !GetBoolean(vision, "includeImage", true)) return message;
+        var imageBase64 = GetString(vision, "imageBase64");
+        if (string.IsNullOrWhiteSpace(imageBase64)) imageBase64 = GetString(vision, "cursorCropBase64");
+        if (string.IsNullOrWhiteSpace(imageBase64)) return message;
+        var mimeType = GetString(vision, "mimeType");
+        if (string.IsNullOrWhiteSpace(mimeType)) mimeType = "image/png";
+        var detail = GetString(vision, "detail");
+        if (string.IsNullOrWhiteSpace(detail)) detail = "low";
+        var dataUrl = imageBase64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+            ? imageBase64
+            : "data:" + mimeType + ";base64," + imageBase64;
+
+        if (responsesApi)
+        {
+            return new List<object>
+            {
+                new Dictionary<string, object> { { "type", "input_text" }, { "text", message } },
+                new Dictionary<string, object> { { "type", "input_image" }, { "image_url", dataUrl }, { "detail", detail } }
+            };
+        }
+
+        return new List<object>
+        {
+            new Dictionary<string, object> { { "type", "text" }, { "text", message } },
+            new Dictionary<string, object>
+            {
+                { "type", "image_url" },
+                { "image_url", new Dictionary<string, object> { { "url", dataUrl }, { "detail", detail } } }
+            }
+        };
+    }
+
+    private static StudioApiResponse GptSovitsTts(Dictionary<string, object> input)
+    {
+        var text = GetString(input, "text");
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return JsonError(400, "TTS text is required.");
+        }
+
+        var apiUrl = GetString(input, "apiUrl");
+        if (string.IsNullOrWhiteSpace(apiUrl))
+        {
+            apiUrl = "http://127.0.0.1:9880/tts";
+        }
+        Uri parsed;
+        if (!Uri.TryCreate(apiUrl, UriKind.Absolute, out parsed) || parsed.Scheme != Uri.UriSchemeHttp || !IsLoopbackHost(parsed.Host))
+        {
+            return JsonError(400, "GPT-SoVITS proxy only allows loopback HTTP URLs.");
+        }
+
+        TryLoadGptSovitsWeight(parsed, "/set_gpt_weights", GetString(input, "gptWeightPath"));
+        TryLoadGptSovitsWeight(parsed, "/set_sovits_weights", GetString(input, "sovitsWeightPath"));
+
+        const string textLang = "ja";
+
+        var query = new Dictionary<string, string>
+        {
+            { "text", text },
+            { "text_lang", textLang },
+            { "ref_audio_path", GetString(input, "refAudioPath") },
+            { "prompt_text", GetString(input, "promptText") },
+            { "prompt_lang", "ja" },
+            { "text_split_method", text.Length <= 4 ? "cut0" : "cut5" },
+            { "batch_size", "1" },
+            { "media_type", "wav" },
+            { "streaming_mode", "false" },
+            { "parallel_infer", "true" },
+            { "_", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString() }
+        };
+
+        var builder = new UriBuilder(parsed);
+        builder.Query = BuildQuery(query);
+        var provider = GetBytes(builder.ToString(), null);
+        return new StudioApiResponse
+        {
+            StatusCode = 200,
+            StatusText = "OK",
+            ContentType = string.IsNullOrWhiteSpace(provider.ContentType) ? "audio/wav" : provider.ContentType,
+            Body = provider.Body
+        };
+    }
+
+    private static StudioApiResponse MimoTts(Dictionary<string, object> input)
+    {
+        var text = GetString(input, "text");
+        var apiKey = GetString(input, "apiKey");
+        var apiUrl = NormalizeMimoTtsUrl(GetString(input, "apiUrl"));
+        ValidateRemoteOrLoopbackUrl(apiUrl);
+        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(apiKey))
+        {
+            return JsonError(400, "MiMo TTS text and API Key are required.");
+        }
+
+        var model = GetString(input, "model");
+        if (string.IsNullOrWhiteSpace(model))
+        {
+            model = "mimo-v2.5-tts";
+        }
+        var voice = GetString(input, "voice");
+        if (string.IsNullOrWhiteSpace(voice))
+        {
+            voice = "mimo_default";
+        }
+
+        var payload = new Dictionary<string, object>
+        {
+            { "model", model },
+            { "messages", new object[]
+                {
+                    new Dictionary<string, object> { { "role", "user" }, { "content", TtsReadInstruction(text, GetString(input, "textLang"), input) } },
+                    new Dictionary<string, object> { { "role", "assistant" }, { "content", text } }
+                }
+            },
+            { "modalities", new object[] { "audio" } },
+            { "audio", new Dictionary<string, object> { { "format", "wav" }, { "voice", voice } } }
+        };
+
+        var provider = PostBytes(apiUrl, Json.Serialize(payload), new Dictionary<string, string> { { "api-key", apiKey } });
+        if (!string.IsNullOrWhiteSpace(provider.ContentType) &&
+            provider.ContentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+        {
+            return new StudioApiResponse
+            {
+                StatusCode = 200,
+                StatusText = "OK",
+                ContentType = provider.ContentType,
+                Body = provider.Body
+            };
+        }
+
+        var responseText = Encoding.UTF8.GetString(provider.Body);
+        var audioPayload = PickAudioBase64(DeserializeObject(responseText));
+        if (string.IsNullOrWhiteSpace(audioPayload))
+        {
+            throw new InvalidOperationException("Unable to parse MiMo TTS audio data.");
+        }
+
+        return new StudioApiResponse
+        {
+            StatusCode = 200,
+            StatusText = "OK",
+            ContentType = "audio/wav",
+            Body = DecodeAudioPayload(audioPayload)
+        };
+    }
+
+    private static StudioApiResponse OpenAiTts(Dictionary<string, object> input)
+    {
+        var text = GetString(input, "text");
+        var apiKey = GetString(input, "apiKey");
+        var apiUrl = GetString(input, "apiUrl");
+        if (string.IsNullOrWhiteSpace(apiUrl))
+        {
+            apiUrl = "https://api.openai.com/v1/audio/speech";
+        }
+        ValidateRemoteOrLoopbackUrl(apiUrl);
+        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(apiKey))
+        {
+            return JsonError(400, "TTS text and API Key are required.");
+        }
+
+        var speechStyle = GetObject(input, "speechStyle");
+        var speed = GetDouble(speechStyle, "speed", 1.0, 0.75, 1.25);
+        var payload = new Dictionary<string, object>
+        {
+            { "model", GetString(input, "model") == string.Empty ? "tts-1" : GetString(input, "model") },
+            { "input", text },
+            { "voice", GetString(input, "voice") == string.Empty ? "alloy" : GetString(input, "voice") },
+            { "response_format", "mp3" },
+            { "speed", speed }
+        };
+
+        var provider = PostBytes(apiUrl, Json.Serialize(payload), new Dictionary<string, string> { { "Authorization", "Bearer " + apiKey } });
+        return new StudioApiResponse
+        {
+            StatusCode = 200,
+            StatusText = "OK",
+            ContentType = string.IsNullOrWhiteSpace(provider.ContentType) ? "audio/mpeg" : provider.ContentType,
+            Body = provider.Body
+        };
+    }
+
+    private static void TryLoadGptSovitsWeight(Uri baseUri, string path, string weightPath)
+    {
+        if (string.IsNullOrWhiteSpace(weightPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var builder = new UriBuilder(baseUri);
+            builder.Path = path;
+            builder.Query = BuildQuery(new Dictionary<string, string> { { "weights_path", weightPath } });
+            GetBytes(builder.ToString(), null);
+        }
+        catch
+        {
+            // The browser implementation treats these endpoints as best-effort.
+        }
+    }
+
+    private static string BuildQuery(Dictionary<string, string> values)
+    {
+        var parts = new List<string>();
+        foreach (var pair in values)
+        {
+            if (pair.Value == null) continue;
+            parts.Add(Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value));
+        }
+        return string.Join("&", parts);
+    }
+
+    private static string PickAudioBase64(Dictionary<string, object> data)
+    {
+        var choices = GetArray(data, "choices");
+        if (choices != null && choices.Length > 0)
+        {
+            var first = choices[0] as Dictionary<string, object>;
+            var message = GetObject(first, "message");
+            var audioObject = GetObject(message, "audio");
+            var nestedAudio = GetString(audioObject, "data");
+            if (!string.IsNullOrWhiteSpace(nestedAudio)) return nestedAudio;
+
+            var messageAudio = GetString(message, "audio");
+            if (!string.IsNullOrWhiteSpace(messageAudio)) return messageAudio;
+        }
+
+        var audio = GetObject(data, "audio");
+        var audioData = GetString(audio, "data");
+        if (!string.IsNullOrWhiteSpace(audioData)) return audioData;
+
+        var dataObject = GetObject(data, "data");
+        var dataAudio = GetString(dataObject, "audio");
+        if (!string.IsNullOrWhiteSpace(dataAudio)) return dataAudio;
+
+        return string.Empty;
+    }
+
+    private static byte[] DecodeAudioPayload(string encoded)
+    {
+        var text = (encoded ?? string.Empty).Trim();
+        text = System.Text.RegularExpressions.Regex.Replace(
+            text,
+            @"^data:audio\/\w+;base64,",
+            string.Empty,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        if (text.Length % 2 == 0 && System.Text.RegularExpressions.Regex.IsMatch(text, @"\A[0-9a-f]+\z", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            var bytes = new byte[text.Length / 2];
+            for (var i = 0; i < bytes.Length; i++)
+            {
+                bytes[i] = Convert.ToByte(text.Substring(i * 2, 2), 16);
+            }
+            return bytes;
+        }
+
+        return Convert.FromBase64String(text);
+    }
+
+    private static string PickReply(Dictionary<string, object> data)
+    {
+        if (data == null) return string.Empty;
+        var outputText = GetString(data, "output_text");
+        if (!string.IsNullOrWhiteSpace(outputText)) return outputText;
+
+        var output = GetArray(data, "output");
+        if (output != null)
+        {
+            var lines = new List<string>();
+            foreach (var item in output)
+            {
+                var itemData = item as Dictionary<string, object>;
+                var content = GetArray(itemData, "content");
+                if (content == null) continue;
+                foreach (var block in content)
+                {
+                    var blockData = block as Dictionary<string, object>;
+                    var type = GetString(blockData, "type");
+                    if (type == "output_text" || type == "text")
+                    {
+                        lines.Add(GetString(blockData, "text"));
+                    }
+                }
+            }
+            var merged = string.Join("\n", lines).Trim();
+            if (!string.IsNullOrWhiteSpace(merged)) return merged;
+        }
+
+        var choices = GetArray(data, "choices");
+        if (choices != null && choices.Length > 0)
+        {
+            var first = choices[0] as Dictionary<string, object>;
+            if (first != null)
+            {
+                object message;
+                if (first.TryGetValue("message", out message))
+                {
+                    var messageData = message as Dictionary<string, object>;
+                    var content = GetString(messageData, "content");
+                    if (!string.IsNullOrWhiteSpace(content)) return content;
+                }
+                var text = GetString(first, "text");
+                if (!string.IsNullOrWhiteSpace(text)) return text;
+            }
+        }
+
+        return GetString(data, "reply");
+    }
+
+    private static string PostJson(string url, Dictionary<string, object> payload, Dictionary<string, string> headers)
+    {
+        return Encoding.UTF8.GetString(PostBytes(
+            url,
+            Json.Serialize(payload),
+            headers,
+            ChatRequestTimeoutMs
+        ).Body);
+    }
+
+    private static void PostJsonStream(string url, Dictionary<string, object> payload, Dictionary<string, string> headers, Action<byte[]> write)
+    {
+        var body = Json.Serialize(payload);
+        var bytes = Encoding.UTF8.GetBytes(body ?? string.Empty);
+        var request = (HttpWebRequest)WebRequest.Create(url);
+        request.Method = "POST";
+        request.ContentType = "application/json; charset=utf-8";
+        request.Accept = "text/event-stream, application/json, */*";
+        request.Timeout = ChatRequestTimeoutMs;
+        request.ReadWriteTimeout = ChatStreamReadWriteTimeoutMs;
+        AddHeaders(request, headers);
+        using (var requestStream = request.GetRequestStream())
+        {
+            requestStream.Write(bytes, 0, bytes.Length);
+        }
+
+        using (var response = (HttpWebResponse)request.GetResponse())
+        using (var stream = response.GetResponseStream())
+        {
+            var contentType = response.ContentType ?? string.Empty;
+            if (contentType.IndexOf("event-stream", StringComparison.OrdinalIgnoreCase) < 0 &&
+                contentType.IndexOf("stream", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                ForwardPossiblyMislabelledStream(stream ?? Stream.Null, write);
+                return;
+            }
+
+            var buffer = new byte[8192];
+            while (true)
+            {
+                var read = stream == null ? 0 : stream.Read(buffer, 0, buffer.Length);
+                if (read <= 0) break;
+                var chunk = new byte[read];
+                Buffer.BlockCopy(buffer, 0, chunk, 0, read);
+                write(chunk);
+            }
+        }
+    }
+
+    private static void ForwardPossiblyMislabelledStream(Stream stream, Action<byte[]> write)
+    {
+        var buffer = new byte[8192];
+        var read = stream.Read(buffer, 0, buffer.Length);
+        if (read <= 0) return;
+
+        if (LooksLikeSsePayload(buffer, read))
+        {
+            while (read > 0)
+            {
+                var chunk = new byte[read];
+                Buffer.BlockCopy(buffer, 0, chunk, 0, read);
+                write(chunk);
+                read = stream.Read(buffer, 0, buffer.Length);
+            }
+            return;
+        }
+
+        using (var memory = new MemoryStream())
+        {
+            memory.Write(buffer, 0, read);
+            while (true)
+            {
+                read = stream.Read(buffer, 0, buffer.Length);
+                if (read <= 0) break;
+                memory.Write(buffer, 0, read);
+            }
+            WriteSseEvent(write, "message", Encoding.UTF8.GetString(memory.ToArray()));
+        }
+    }
+
+    private static bool LooksLikeSsePayload(byte[] buffer, int length)
+    {
+        var count = Math.Min(Math.Max(length, 0), 256);
+        if (count <= 0) return false;
+        var head = Encoding.UTF8.GetString(buffer, 0, count).TrimStart('\uFEFF', ' ', '\t', '\r', '\n');
+        return head.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
+               head.StartsWith("event:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void WriteSseEvent(Action<byte[]> write, string eventName, string data)
+    {
+        var builder = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(eventName) && eventName != "message")
+        {
+            builder.Append("event: ").Append(eventName).Append("\n");
+        }
+        var value = data ?? string.Empty;
+        var lines = value.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        foreach (var line in lines)
+        {
+            builder.Append("data: ").Append(line).Append("\n");
+        }
+        builder.Append("\n");
+        write(Encoding.UTF8.GetBytes(builder.ToString()));
+    }
+
+    private static ProviderBytes PostBytes(string url, string body, Dictionary<string, string> headers, int timeoutMs = 120000)
+    {
+        var bytes = Encoding.UTF8.GetBytes(body ?? string.Empty);
+        var request = (HttpWebRequest)WebRequest.Create(url);
+        request.Method = "POST";
+        request.ContentType = "application/json; charset=utf-8";
+        request.Accept = "*/*";
+        request.Timeout = timeoutMs;
+        request.ReadWriteTimeout = timeoutMs;
+        AddHeaders(request, headers);
+        using (var requestStream = request.GetRequestStream())
+        {
+            requestStream.Write(bytes, 0, bytes.Length);
+        }
+        return ReadProviderResponse((HttpWebResponse)request.GetResponse());
+    }
+
+    private static ProviderBytes GetBytes(string url, Dictionary<string, string> headers, int timeoutMs = 120000)
+    {
+        var request = (HttpWebRequest)WebRequest.Create(url);
+        request.Method = "GET";
+        request.Accept = "*/*";
+        request.Timeout = timeoutMs;
+        request.ReadWriteTimeout = timeoutMs;
+        AddHeaders(request, headers);
+        return ReadProviderResponse((HttpWebResponse)request.GetResponse());
+    }
+
+    private static void AddHeaders(HttpWebRequest request, Dictionary<string, string> headers)
+    {
+        if (headers == null) return;
+        foreach (var header in headers)
+        {
+            if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Headers[HttpRequestHeader.Authorization] = header.Value;
+            }
+            else if (header.Key.Equals("User-Agent", StringComparison.OrdinalIgnoreCase))
+            {
+                request.UserAgent = header.Value;
+            }
+            else if (header.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Headers[HttpRequestHeader.Cookie] = header.Value;
+            }
+            else if (header.Key.Equals("Referer", StringComparison.OrdinalIgnoreCase) ||
+                header.Key.Equals("Referrer", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Referer = header.Value;
+            }
+            else if (header.Key.Equals("Accept", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Accept = header.Value;
+            }
+            else
+            {
+                request.Headers[header.Key] = header.Value;
+            }
+        }
+    }
+
+    private static ProviderBytes ReadProviderResponse(HttpWebResponse response)
+    {
+        using (response)
+        using (var stream = response.GetResponseStream())
+        using (var memory = new MemoryStream())
+        {
+            stream.CopyTo(memory);
+            return new ProviderBytes
+            {
+                Body = memory.ToArray(),
+                ContentType = response.ContentType
+            };
+        }
+    }
+
+    private static int GetStatusCode(WebException ex, int fallback)
+    {
+        var response = ex.Response as HttpWebResponse;
+        return response == null ? fallback : (int)response.StatusCode;
+    }
+
+    private static string ReadWebException(WebException ex)
+    {
+        var response = ex.Response;
+        if (response == null)
+        {
+            return ex.Message;
+        }
+        using (response)
+        using (var stream = response.GetResponseStream())
+        using (var reader = new StreamReader(stream ?? Stream.Null, Encoding.UTF8))
+        {
+            var text = reader.ReadToEnd();
+            return string.IsNullOrWhiteSpace(text) ? ex.Message : text;
+        }
+    }
+
+    private static StudioApiResponse JsonOk(object payload)
+    {
+        return new StudioApiResponse
+        {
+            StatusCode = 200,
+            StatusText = "OK",
+            ContentType = "application/json; charset=utf-8",
+            Body = Encoding.UTF8.GetBytes(Json.Serialize(payload))
+        };
+    }
+
+    private static StudioApiResponse JsonError(int statusCode, string message)
+    {
+        return new StudioApiResponse
+        {
+            StatusCode = statusCode,
+            StatusText = statusCode == 400 ? "Bad Request" : "Error",
+            ContentType = "application/json; charset=utf-8",
+            Body = Encoding.UTF8.GetBytes(Json.Serialize(new Dictionary<string, object>
+            {
+                { "success", false },
+                { "message", message ?? "Request failed" }
+            }))
+        };
+    }
+}
+
+internal sealed class ProviderBytes
+{
+    public byte[] Body;
+    public string ContentType;
+}
+
+internal sealed class NeteaseMusicStreamTicket
+{
+    public string Url;
+    public string Cookie;
+    public DateTimeOffset ExpiresAt;
+}

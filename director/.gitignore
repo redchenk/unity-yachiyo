@@ -1,0 +1,24 @@
+node_modules/
+__pycache__/
+npm-debug.log*
+.env
+.env.*
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+release/
+YachiyoLive2DStudio/
+
+# Local build copies and obsolete generated chunks; current tracked chunks remain versioned.
+dist/live2d-studio/index [0-9]*.html
+dist/live2d-studio/assets/* [0-9]*.*
+dist/live2d-studio/assets/index-*.js
+dist/live2d-studio/assets/index-*.css
+
+
+dist/
+output/
+models/
+YachiyoUnityDirector/

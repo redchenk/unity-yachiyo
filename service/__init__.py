@@ -1,0 +1,1 @@
+"""Yachiyo motion bridge."""

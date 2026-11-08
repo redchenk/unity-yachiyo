@@ -1,0 +1,65 @@
+.venv/
+vendor/
+UnityProject/Library/
+UnityProject/Temp/
+UnityProject/Obj/
+UnityProject/Logs/
+UnityProject/UserSettings/
+build/
+__pycache__/
+service/cache/
+*.log
+.DS_Store
+# Original and extracted character assets stay private.
+*.unitypackage
+UnityProject/Assets/#八千代/
+UnityProject/Assets/#八千代.meta
+# Diagnostic exports contain private character geometry.
+artifacts/*-surfaces.json
+artifacts/*-intersections.json
+artifacts/cloth-geometry.json
+artifacts/sleeve-bind-inspection.json
+artifacts/*-sleeve-contacts.json
+artifacts/*-rig.json
+
+.venv-ardy/
+models/
+
+# Local data, proprietary references, build products and diagnostics.
+/artifacts/
+/reference_model/
+/tmp_inspect/
+/月见一万代/
+/build_backup_tmp/
+/.blenderconfig/
+/.blenderuser/
+/.pydeps/
+*.pyc
+.env
+.env.*
+*.pem
+*.key
+*.sqlite*
+*.db
+node_modules/
+/director/dist/
+/director/output/
+/director/release/
+/director/models/
+/director/YachiyoUnityDirector/
+/UnityProject/.vs/
+/UnityProject/*.csproj
+/UnityProject/*.sln
+
+# Recreated from the user's licensed model by Yachiyo/Create Studio.
+/UnityProject/Assets/Yachiyo/Studio.unity
+/UnityProject/Assets/Yachiyo/Studio.unity.meta
+/UnityProject/Assets/Yachiyo/cloth*-physics.mat*
+
+/UnityProject/Assets/Plugins/macOS/YachiyoWebView.bundle
+
+# Ignore local symlinks as well as directories.
+/director/node_modules
+/director/models
+
+.vite/

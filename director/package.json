@@ -1,0 +1,55 @@
+{
+  "name": "yachiyo-unity-director",
+  "version": "0.2.6",
+  "private": true,
+  "description": "Yachiyo Unity director: local avatar control, dialogue, streaming speech and singing",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config live2d-studio/vite.config.js --host 127.0.0.1 --port 5174",
+    "build": "vite build --config live2d-studio/vite.config.js",
+    "build:live2d-studio": "vite build --config live2d-studio/vite.config.js",
+    "generate:yachiyo-memory-seeds": "node tools/memory/generate-yachiyo-memory-seeds.mjs ../yachiyo_novel_detailed_corpus.txt",
+    "install:yachiyo-vts-parameters": "node tools/vtube-studio/install-yachiyo-model-parameters.mjs",
+    "audit:yachiyo-vts-control": "node tools/vtube-studio/audit-yachiyo-vts-control.mjs",
+    "install:vosk-model": "powershell.exe -ExecutionPolicy Bypass -File tools/asr/install-vosk-model.ps1",
+    "install:vosk-python": "py -3.9 -m pip install vosk",
+    "start:netease-api": "node tools/music/netease-api-enhanced-service.mjs --port 3302 --host 127.0.0.1",
+    "start:minecraft-agent": "node tools/minecraft/minecraft-agent-service.mjs --port 3303",
+    "desktop": "electron .",
+    "start": "electron .",
+    "pack:desktop": "electron-builder",
+    "dist:desktop": "npm run build && electron-builder",
+    "test:desktop": "node --test tools/desktop/tests/*.test.mjs",
+    "smoke:desktop": "electron . --smoke-test",
+    "verify:unity": "electron tools/desktop/verify-unity.mjs",
+    "verify:unified": "node tools/desktop/verify-unified.mjs"
+  },
+  "dependencies": {
+    "@lucide/vue": "^1.17.0",
+    "@neteasecloudmusicapienhanced/api": "^4.35.1",
+    "@vitejs/plugin-vue": "^6.0.6",
+    "better-sqlite3": "^12.6.2",
+    "blive-message-listener": "^0.5.5",
+    "minecraft-data": "^3.113.1",
+    "mineflayer": "^4.37.1",
+    "mineflayer-collectblock": "^1.6.0",
+    "mineflayer-pathfinder": "^2.4.5",
+    "mineflayer-tool": "^1.2.0",
+    "vec3": "^0.2.0",
+    "vite": "^8.0.5",
+    "vue": "^3.5.0",
+    "ws": "8.21.0"
+  },
+  "optionalDependencies": {
+    "vosk": "^0.3.39"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  },
+  "main": "tools/desktop/main.mjs",
+  "author": "Yachiyo Live2D Studio contributors"
+}

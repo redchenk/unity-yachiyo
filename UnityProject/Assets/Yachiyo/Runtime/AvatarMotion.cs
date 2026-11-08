@@ -1,0 +1,136 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace Yachiyo {
+ [DefaultExecutionOrder(-100)]
+ public class AvatarMotion : MonoBehaviour {
+  public Animator animator;
+  public bool followPointer=true;
+  public string CurrentAction {get;private set;}="待机";
+  public string MotionSource {get;private set;}="本地动作";
+  public float Progress => clip==null?0:Mathf.Clamp01(clock/Mathf.Max(0.01f,clip.Duration));
+  public bool Playing => clip!=null;
+  public bool LocalActionActive=>clip==null&&localAction!="idle";
+  public bool Streaming {get;private set;}
+  public int CurrentSequence=>clip==null?0:clip.sequence;
+  public float BufferedSeconds {get{float seconds=clip==null?0:Mathf.Max(0,clip.frames.Length/clip.fps-clock);foreach(var c in streamQueue)seconds+=c.frames.Length/c.fps;return seconds;}}
+  public int StreamChunks {get;private set;}
+  public int StreamUnderruns {get;private set;}
+  readonly Queue<MotionClip> streamQueue=new Queue<MotionClip>();
+  public float expression;
+  YachiyoFaceController faceController;
+  readonly Dictionary<HumanBodyBones,Transform> bones=new Dictionary<HumanBodyBones,Transform>();
+  readonly Dictionary<HumanBodyBones,Quaternion> restLocal=new Dictionary<HumanBodyBones,Quaternion>();
+  readonly Dictionary<HumanBodyBones,Quaternion> restGlobal=new Dictionary<HumanBodyBones,Quaternion>();
+  readonly Dictionary<HumanBodyBones,Quaternion> transition=new Dictionary<HumanBodyBones,Quaternion>();
+  SkinnedMeshRenderer[] meshes;
+  readonly List<(SkinnedMeshRenderer mesh,int index)> blink=new List<(SkinnedMeshRenderer,int)>();
+  readonly List<(SkinnedMeshRenderer mesh,int index)> smile=new List<(SkinnedMeshRenderer,int)>();
+  MotionClip clip;
+  HumanBodyBones[] mapping;
+  Vector3 hipsRest, startRoot, transitionHips;
+  float hipHeight, clock, blendClock=1, actionTime, nextBlink=3, blinkClock=-1;
+  string localAction="idle";
+  bool initialized;
+  public void Initialize() {
+   if(initialized)return;
+   animator=GetComponent<Animator>();
+   if(!animator||!animator.avatar||!animator.avatar.isHuman)throw new InvalidOperationException("Humanoid Avatar required");
+   animator.enabled=false;
+   for(int i=0;i<(int)HumanBodyBones.LastBone;i++) {
+    var b=(HumanBodyBones)i;var t=animator.GetBoneTransform(b);if(!t)continue;
+    bones[b]=t;restLocal[b]=t.localRotation;restGlobal[b]=Quaternion.Inverse(transform.rotation)*t.rotation;
+   }
+   hipsRest=bones[HumanBodyBones.Hips].localPosition;
+   hipHeight=transform.InverseTransformPoint(bones[HumanBodyBones.Hips].position).y;
+   meshes=GetComponentsInChildren<SkinnedMeshRenderer>();
+   foreach(var m in meshes){
+    bool nativeBlink=false;
+    foreach(string name in new[]{"_101_FC_eye_close_left","_101_FC_eye_close_right","_101_EL_eye_close_left","_101_EL_eye_close_right"}){int index=m.sharedMesh.GetBlendShapeIndex(name);if(index>=0){blink.Add((m,index));nativeBlink=true;}}
+    if(!nativeBlink){
+     int combined=m.sharedMesh.GetBlendShapeIndex("まばたき");
+     if(combined>=0)blink.Add((m,combined));
+     else foreach(string name in new[]{"EyeClosedLeft","EyeClosedRight"}){int index=m.sharedMesh.GetBlendShapeIndex(name);if(index>=0)blink.Add((m,index));}
+    }
+    int nativeSmile=m.sharedMesh.GetBlendShapeIndex("_209_FC_mouth_smile");
+    if(nativeSmile>=0)smile.Add((m,nativeSmile));
+    else foreach(string name in new[]{"MouthSmileLeft","MouthSmileRight"}){int index=m.sharedMesh.GetBlendShapeIndex(name);if(index>=0)smile.Add((m,index));}
+   }
+   initialized=true;
+  }
+  void Start()=>Initialize();
+  void CaptureTransition() {foreach(var p in bones)transition[p.Key]=p.Value.localRotation;transitionHips=bones[HumanBodyBones.Hips].localPosition;blendClock=0;}
+  public void Play(MotionClip motion,string label) {
+   Streaming=false;streamQueue.Clear();Initialize(); motion.Validate();CaptureTransition();clip=motion;clock=0;CurrentAction=label;MotionSource=motion.source;
+   mapping=new HumanBodyBones[motion.bones.Length];for(int i=0;i<mapping.Length;i++) mapping[i]=Enum.TryParse(motion.bones[i],out HumanBodyBones b)?b:HumanBodyBones.LastBone;
+   startRoot=motion.frames[0].root;
+  }
+  public void Enqueue(MotionClip motion,string label){
+   motion.Validate();
+   if(!Streaming){Play(motion,label);Streaming=true;StreamChunks=1;StreamUnderruns=0;}
+   else {if(motion.bones.Length!=clip.bones.Length)throw new ArgumentException("Stream skeleton changed");for(int i=0;i<motion.bones.Length;i++)if(motion.bones[i]!=clip.bones[i])throw new ArgumentException("Stream bone order changed");streamQueue.Enqueue(motion);StreamChunks++;}
+  }
+  public void DiscardFuture()=>streamQueue.Clear();
+  public void Act(string action,string label) {Streaming=false;streamQueue.Clear();Initialize();CaptureTransition();clip=null;localAction=action;actionTime=0;CurrentAction=label;MotionSource="本地动作";}
+  public void Tick(float dt) {
+   Initialize();actionTime+=dt;blendClock+=dt;
+   foreach(var p in bones)p.Value.localRotation=restLocal[p.Key];
+   bones[HumanBodyBones.Hips].localPosition=hipsRest;
+   if(clip!=null) {
+    clock+=dt;
+    if(Streaming&&clock>=clip.frames.Length/clip.fps){
+     if(streamQueue.Count>0){clock-=clip.frames.Length/clip.fps;clip=streamQueue.Dequeue();CurrentAction=clip.prompt;MotionSource=clip.source;}
+     else {if(clock-dt<clip.frames.Length/clip.fps)StreamUnderruns++;clock=Mathf.Min(clock,clip.frames.Length/clip.fps);}
+    }
+    float pos=Mathf.Clamp(clock*clip.fps,0,clip.frames.Length-1);int a=(int)pos,b=Mathf.Min(a+1,clip.frames.Length-1);float mix=pos-a;
+    var first=clip.frames[a];var second=clip.frames[b];
+    if(Streaming&&streamQueue.Count>0&&clock>=clip.Duration){first=clip.frames[clip.frames.Length-1];second=streamQueue.Peek().frames[0];mix=Mathf.Clamp01((clock-clip.Duration)*clip.fps);}
+    // Global T-pose deltas avoid assuming that SOMA and FBX local bone axes match.
+    for(int j=0;j<mapping.Length;j++)if(bones.TryGetValue(mapping[j],out var t)) {
+     var q=Quaternion.Slerp(first.rotations[j],second.rotations[j],mix);
+     t.rotation=transform.rotation*q*restGlobal[mapping[j]];
+    }
+    var root=Vector3.Lerp(first.root,second.root,mix);
+    root.x-=startRoot.x;root.z-=startRoot.z;
+    root*=hipHeight/clip.referenceHipHeight;
+    bones[HumanBodyBones.Hips].position=transform.TransformPoint(root);
+    if(!Streaming&&clock>clip.Duration+0.15f)Act("idle","待机");
+   } else {
+    float breathe=Mathf.Sin(actionTime*1.7f);
+    RotateWorld(HumanBodyBones.LeftUpperArm,Vector3.forward,70);
+    RotateWorld(HumanBodyBones.RightUpperArm,Vector3.forward,-70);
+    RotateLocal(HumanBodyBones.Chest,new Vector3(breathe*0.7f,0,0));
+    if(localAction=="wave") {
+     RotateWorld(HumanBodyBones.RightUpperArm,Vector3.forward,95);
+     RotateWorld(HumanBodyBones.RightLowerArm,Vector3.forward,65+12*Mathf.Sin(actionTime*7));
+     RotateLocal(HumanBodyBones.RightHand,new Vector3(0,0,12*Mathf.Sin(actionTime*7)));
+    }
+    if(localAction=="bow")RotateLocal(HumanBodyBones.Spine,new Vector3(25*Mathf.Sin(Mathf.Clamp01(actionTime/2.8f)*Mathf.PI),0,0));
+    if(localAction=="nod")RotateLocal(HumanBodyBones.Head,new Vector3(10*Mathf.Sin(actionTime*5),0,0));
+    if(localAction=="head_tilt")RotateLocal(HumanBodyBones.Head,new Vector3(0,0,10*Mathf.Sin(Mathf.Clamp01(actionTime/3.5f)*Mathf.PI)));
+    if(localAction=="shake_head")RotateLocal(HumanBodyBones.Head,new Vector3(0,12*Mathf.Sin(actionTime*5),0));
+    if(localAction=="turn")RotateWorld(HumanBodyBones.Hips,Vector3.up,Mathf.SmoothStep(0,360,Mathf.Clamp01(actionTime/3)));
+    if(localAction!="idle"&&actionTime>3.5f)Act("idle","待机");
+   }
+   float blend=Mathf.SmoothStep(0,1,Mathf.Clamp01(blendClock/0.3f));
+   if(blend<1){foreach(var p in transition)bones[p.Key].localRotation=Quaternion.Slerp(p.Value,bones[p.Key].localRotation,blend);bones[HumanBodyBones.Hips].localPosition=Vector3.Lerp(transitionHips,bones[HumanBodyBones.Hips].localPosition,blend);}
+   if(followPointer&&clip==null&&localAction=="idle") {
+    float x=Mathf.Clamp((Input.mousePosition.x/Mathf.Max(1,Screen.width)-0.5f)*2,-1,1),y=Mathf.Clamp((Input.mousePosition.y/Mathf.Max(1,Screen.height)-0.5f)*2,-1,1);
+    RotateLocal(HumanBodyBones.Head,new Vector3(-y*7,x*12,0));
+   }
+   if(faceController==null)faceController=GetComponent<YachiyoFaceController>();
+   if(faceController==null){
+    nextBlink-=dt;
+    if(nextBlink<0){blinkClock=0;nextBlink=UnityEngine.Random.Range(2.8f,5.3f);}
+    float weight=0;if(blinkClock>=0){blinkClock+=dt;weight=Mathf.Sin(Mathf.Clamp01(blinkClock/0.18f)*Mathf.PI)*100;if(blinkClock>=0.18f)blinkClock=-1;}
+    foreach(var s in blink)s.mesh.SetBlendShapeWeight(s.index,weight);
+    foreach(var s in smile)s.mesh.SetBlendShapeWeight(s.index,expression*70);
+   }
+  }
+  // Native sleeve constraints evaluate after this pose and before late cloth solving.
+  void Update()=>Tick(Time.deltaTime);
+  void RotateLocal(HumanBodyBones b,Vector3 angle){if(bones.TryGetValue(b,out var t))t.localRotation*=Quaternion.Euler(angle);}
+  void RotateWorld(HumanBodyBones b,Vector3 axis,float angle){if(bones.TryGetValue(b,out var t))t.rotation=Quaternion.AngleAxis(angle,transform.TransformDirection(axis))*t.rotation;}
+ }
+}

@@ -1,0 +1,21 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fork } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { createServiceManager } from './services.mjs';
+import { startDesktopServer } from './server.mjs';
+import { studioDataDirectory } from '../runtime/paths.mjs';
+const arg=name=>process.argv[process.argv.indexOf(name)+1];
+const parent=Number(arg('--parent-pid')), state=arg('--state');
+if(!parent||!state)throw new Error('Owned parent PID and state file required');
+const root=path.resolve(import.meta.dirname,'../..'),dataDir=studioDataDirectory();
+fs.mkdirSync(dataDir,{recursive:true});fs.mkdirSync(path.dirname(state),{recursive:true,mode:0o700});
+const token=randomBytes(32).toString('hex');let closing=false,runtime;
+const log=message=>fs.appendFileSync(path.join(dataDir,'unified.log'),new Date().toISOString()+' '+String(message).slice(0,2000)+'\n');
+const services=createServiceManager({moduleRoot:root,resourceRoot:root,dataDir,fork:(...args)=>fork(...args),log});
+async function close(){if(closing)return;closing=true;await Promise.allSettled([runtime?.close(),services.close()]);fs.rmSync(path.dirname(state),{recursive:true,force:true});process.exit(0);}
+process.on('SIGTERM',close);process.on('SIGINT',close);
+runtime=await startDesktopServer({resourceRoot:root,dataDir,services,port:process.argv.includes('--port')?Number(arg('--port')):3289,shutdownToken:token,onShutdown:close});
+fs.writeFileSync(state,JSON.stringify({origin:runtime.origin,pid:process.pid,token}),{mode:0o600});
+const watch=setInterval(()=>{try{process.kill(parent,0);}catch{close();}},1000);watch.unref();
+services.ensure('memory').catch(e=>log('Memory startup: '+e.message));

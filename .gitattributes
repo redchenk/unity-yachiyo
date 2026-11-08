@@ -1,0 +1,10 @@
+* text=auto
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.sh text eol=lf
+*.command text eol=lf
+*.cs text eol=lf
+*.meta text eol=lf
+*.asset text eol=lf
+*.png binary
+*.otf binary
