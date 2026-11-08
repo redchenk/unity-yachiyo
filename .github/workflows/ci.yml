@@ -16,8 +16,8 @@ jobs:
           cache: npm
           cache-dependency-path: director/package-lock.json
       - run: npm ci
-      - run: npm run test:desktop
       - run: npm run build
+      - run: npm run test:desktop
   motion:
     runs-on: ubuntu-latest
     steps:
@@ -26,4 +26,5 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install numpy==1.26.4 scipy
+      - run: python tools/fetch_motion_sources.py --skeleton-only
       - run: python -m unittest discover -s tests -v

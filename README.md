@@ -43,8 +43,8 @@
 
 ```sh
 cd director
-npm run test:desktop
 npm run build
+npm run test:desktop
 # 单窗口应用：实际 WKWebView 音频、Unity 网格、取消和退出清理
 npm run verify:unified
 # 独立协议调试，可选连接真实 GPU 服务
@@ -53,6 +53,7 @@ YACHIYO_VERIFY_MODEL=1 npm run verify:unity
 
 ```sh
 # 不需要 GPU 权重的动作服务逻辑检查
+python3 tools/fetch_motion_sources.py --skeleton-only
 python -m unittest discover -s tests -v
 ```
 
