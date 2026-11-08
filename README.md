@@ -11,6 +11,7 @@
 - 保留原导演台的观众队列、人格、记忆、LLM 控制、字幕、TTS 和 RVC 演唱流程。
 - Unity 接收语义动作、情绪、眨眼、视线及原始 A/I/U/E/O 口型，不经过 Cubism 参数转换。
 - 实际音频开始播放时才启动表演；口型跟随音频时钟。暂停、拖动进度、结束和取消关闭旧口型。
+- Mac 内嵌播放器会逐句接收并补全 GPT-SoVITS 流式 WAV 的长度信息，再开始播放；可预取下一句。停止会取消尚未完成的音频下载。独立 Chromium 调试入口保留边接收边播放。
 - 身体动作默认走现有模型服务；「角色」页可以明确选择本地预览。挥手、鞠躬、转身、走路、鼓掌、跳舞可请求模型；点头、轻微摇头、歪头是本地微动作。
 - 回执包括 accepted / started / completed / cancelled / unsupported / failed。模型失败会显示失败，不会悄悄改播预览。
 - session、epoch、commandId、seq 和 utteranceId 隔离过期命令。取消、切换服务、断线重连不补播旧动作。
@@ -47,6 +48,10 @@ npm run build
 npm run test:desktop
 # 单窗口应用：实际 WKWebView 音频、Unity 网格、取消和退出清理
 npm run verify:unified
+# 安装包实际直播页面：GPT-SoVITS 空长度 WAV 的分块返回、播放与口型
+node tools/desktop/verify-tts.mjs
+# 可选：连接自己的 GPT-SoVITS，配置文件不入库，LLM 回复使用本地固定样例
+node tools/desktop/verify-tts.mjs --settings-file /absolute/path/private-tts-settings.json
 # 独立协议调试，可选连接真实 GPU 服务
 YACHIYO_VERIFY_MODEL=1 npm run verify:unity
 ```

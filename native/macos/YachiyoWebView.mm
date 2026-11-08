@@ -28,6 +28,7 @@ static float cameraDx=0,cameraDy=0,cameraZoom=0;
 @implementation YachiyoNavigation
 - (void)userContentController:(WKUserContentController *)controller didReceiveScriptMessage:(WKScriptMessage *)message {
  if (![message.body isKindOfClass:[NSDictionary class]]) return;
+ if (![NSJSONSerialization isValidJSONObject:message.body]) return;
  if([message.name isEqualToString:@"yachiyoLayout"]){
   NSDictionary *d=message.body;CGFloat x=[d[@"x"] doubleValue],y=[d[@"y"] doubleValue],w=[d[@"width"] doubleValue],h=[d[@"height"] doubleValue];
   bool visible=[d[@"visible"] boolValue]&&w>1&&h>1;

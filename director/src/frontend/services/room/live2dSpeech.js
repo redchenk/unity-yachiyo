@@ -1,6 +1,7 @@
 import { attachAudioMouthAnalyser } from './audioMouthAnalyser.js';
 import { readLipsyncSettings } from './lipsyncSettings.js';
 import { CLOSED_MOUTH } from '../../../shared/audio-lipsync.mjs';
+import { playableTtsBlob } from '../../../shared/tts-audio.mjs';
 import { normalizeLLMApiUrl, readRoomLLMSettings, readRoomTTSSettings } from './roomSettings';
 import { cleanLive2DReply } from './live2dText';
 
@@ -57,21 +58,26 @@ function timeoutError(message) {
   return error;
 }
 
-async function fetchWithTimeout(resource, options = {}, timeoutMs = TTS_FETCH_TIMEOUT_MS, label = 'Request') {
+async function fetchWithTimeout(resource, options = {}, timeoutMs = TTS_FETCH_TIMEOUT_MS, label = 'Request', readResponse = response => response) {
   const AbortControllerClass = globalThis.AbortController;
-  if (!AbortControllerClass) return fetch(resource, options);
+  if (!AbortControllerClass) return readResponse(await fetch(resource, options));
   const controller = new AbortControllerClass();
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const abort = () => controller.abort();
+  if (options.signal?.aborted) abort();
+  options.signal?.addEventListener('abort', abort, { once: true });
+  const timer = window.setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
   try {
-    return await fetch(resource, {
+    return await readResponse(await fetch(resource, {
       ...options,
-      signal: options.signal || controller.signal
-    });
+      signal: controller.signal
+    }));
   } catch (error) {
-    if (error?.name === 'AbortError') throw timeoutError(`${label} timed out`);
+    if (timedOut) throw timeoutError(`${label} timed out`);
     throw error;
   } finally {
     window.clearTimeout(timer);
+    options.signal?.removeEventListener('abort', abort);
   }
 }
 
@@ -396,6 +402,7 @@ function stopAnimationFrame(id) {
 }
 
 export function createLive2DSpeechPlayer({ onState } = {}) {
+  const pendingAudioRequests = new Set();
   let currentAudio = null;
   let frameId = 0;
   let audioContext = null;
@@ -577,6 +584,8 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   function stop() {
     window.TSUKUYOMI_AVATAR_DRIVER?.cancel();
     queueToken += 1;
+    for (const controller of pendingAudioRequests) controller.abort();
+    pendingAudioRequests.clear();
     rejectQueued();
     if (currentReject) currentReject(makeStopError());
     clearCurrentAudio();
@@ -608,18 +617,29 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   }
 
   async function createAudioFromBlob(blob) {
-    const url = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(await playableTtsBlob(blob));
     const audio = new Audio(url);
     audio.dataset.objectUrl = url;
     return audio;
   }
 
-  async function createFastAudioFromUrl(url, speechText = '') {
+  async function createFastAudioFromUrl(url, speechText = '', signal) {
     const response = await fetchWithTimeout('/api/tts/prepare', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }), signal
     }, 10000, 'TTS stream preparation');
     if (!response.ok) throw new Error(`TTS stream ${response.status}`);
     const data = await response.json();
+    // WebKit probes media URLs with range/retry requests, but this relay is
+    // single-use and GPT-SoVITS sends a zero-length WAV header. Fetch each line
+    // once and finalize it before playback; Chromium keeps its streaming path.
+    if (window.yachiyoDesktop?.unified) {
+      return fetchWithTimeout(data.url, { signal }, TTS_FETCH_TIMEOUT_MS, 'TTS audio download', async audioResponse => {
+        if (!audioResponse.ok) throw new Error(`语音服务音频请求失败（HTTP ${audioResponse.status}）`);
+        const audio = await createAudioFromBlob(await audioResponse.blob());
+        audio.dataset.speechText = speechText;
+        return audio;
+      });
+    }
     const audio = new Audio(data.url);
     audio.preload = 'auto';
     audio.dataset.fastStart = 'true';
@@ -629,23 +649,36 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   }
 
   async function makeAudio(text, settings, options = {}) {
+    const controller = new AbortController();
+    pendingAudioRequests.add(controller);
+    try {
+      return await synthesizeAudio(text, settings, options, controller.signal);
+    } finally {
+      pendingAudioRequests.delete(controller);
+    }
+  }
+
+  async function synthesizeAudio(text, settings, options, signal) {
     const translatedLine = await translateForJapaneseTts(text, options);
+    if (signal.aborted) throw makeStopError();
     const ttsText = translatedLine?.text || '';
     if (!ttsText) return null;
     const directLocalGptSovits = isDirectLocalGptSovits(settings);
     if (directLocalGptSovits) {
       await ensureGptSovitsWeights(settings);
+      if (signal.aborted) throw makeStopError();
       const audio = await createFastAudioFromUrl(buildGptSovitsAudioUrl(ttsText, {
         ...settings,
         textLang: FORCED_TTS_LANGUAGE,
         promptLang: FORCED_TTS_LANGUAGE
-      }), ttsText);
+      }), ttsText, signal);
       audio.dataset.speechText = ttsText;
       return audio;
     }
 
-    const response = await fetchWithTimeout('/api/tts', {
+    return fetchWithTimeout('/api/tts', {
       method: 'POST',
+      signal,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...settings,
@@ -655,12 +688,13 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         emotion: normalizeTtsEmotion(options.emotion),
         speechStyle: options.speechStyle || null
       })
-    }, TTS_FETCH_TIMEOUT_MS, 'TTS synthesis');
-    if (!response.ok) {
-      const payload = await response.json().catch(() => null);
-      throw new Error(payload?.message || `TTS ${response.status}`);
-    }
-    return createAudioFromBlob(await response.blob());
+    }, TTS_FETCH_TIMEOUT_MS, 'TTS synthesis', async response => {
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message || `TTS ${response.status}`);
+      }
+      return createAudioFromBlob(await response.blob());
+    });
   }
 
   function prepareQueueItem(item, token, options = {}) {
@@ -857,7 +891,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         };
         audio.onabort = () => fail(makeStopError());
         audio.onended = finish;
-        audio.onerror = () => fail(new Error('Audio playback failed'));
+        audio.onerror = () => fail(new Error(`语音播放失败（音频错误 ${audio.error?.code || '未知'}），请检查语音服务的音频格式`));
         audio.play()
           .then(() => {
             if (settled) return;
