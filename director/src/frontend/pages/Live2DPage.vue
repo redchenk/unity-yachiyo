@@ -2901,7 +2901,7 @@ onUnmounted(() => {
         <div class="live2d-status-copy" role="status" aria-live="polite" aria-atomic="true">
           <span>{{ isSinging ? 'RVC 演唱控制台' : 'AI 主播控制台' }}</span>
           <strong>{{ liveStateDisplay }}</strong>
-          <small>{{ readinessDisplay }}</small>
+          <small>{{ readinessDisplay }}<span v-if="live2d.mode.value === 'unity'"> · {{ performanceLabel }}</span></small>
         </div>
         <button
           class="live2d-icon-btn live2d-debug-toggle"
@@ -2975,7 +2975,6 @@ onUnmounted(() => {
         </p>
       </section>
 
-      <p v-if="live2d.mode.value === 'unity'" class="live2d-inline-status" aria-live="polite">{{ performanceLabel }}</p>
       <div v-if="isSinging" class="rvc-mode-notice">{{ concertDisplay }}</div>
       <nav v-else class="live2d-workspace-tabs" aria-label="直播工具">
         <button
