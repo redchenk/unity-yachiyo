@@ -31,7 +31,7 @@ try{
  const speech=__avatarTools.createLive2DSpeechPlayer();
  driver.control('camera_lock',0);driver.control('camera_reset');await delay(600);post({phase:'idle'});await delay(400);
  let started=false;
- const play=speech.enqueue('こんにちは。',{onStart:()=>{started=true;}});
+ const play=speech.enqueue('こんにちは。',{performance:__avatarTools.affectRuntime.plan({intent:'explain'},'こんにちは。'),onStart:()=>{started=true;}});
  await wait(()=>started,'speech not started');await delay(420);post({phase:'shortSpeech'});await delay(350);
  await play;await delay(650);post({phase:'speechEnded'});await delay(400);
  const parsed=__avatarTools.parseLive2DControlPayload(JSON.stringify({reply:'これは説明です。',actions:[{type:'explain',side:'left',duration:1.5}],emotion:'happy'}));

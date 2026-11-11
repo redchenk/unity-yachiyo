@@ -1,5 +1,17 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { affectRuntime, performanceBodyIntent } from '../services/room/performancePlan.mjs';
+const performanceLabel = ref('平静 · 陪伴');
+let conversationListeningUntil = 0;
+const allowVoiceInterruption = ref(localStorage.getItem('yachiyo.voice-interruption') === 'true');
+function onPerformanceState(event) {
+  const labels = { reassure: '关切 · 安慰', thank: '欣喜 · 感谢', explain: '专注 · 解释', tease: '俏皮 · 打趣', surprise: '惊讶 · 好奇', refuse: '认真 · 表达界限', listen: '温柔 · 倾听', neutral: '平静 · 陪伴' };
+  performanceLabel.value = labels[event.detail?.plan?.intent] || labels.neutral;
+}
+function updateVoiceInterruption() {
+  localStorage.setItem('yachiyo.voice-interruption', String(allowVoiceInterruption.value));
+  asrRecorder?.setBargeInEnabled(allowVoiceInterruption.value && !songBusy.value);
+}
 import TsIcon from '../components/TsIcon.vue';
 import YachiyoMusicPanel from '../components/music/YachiyoMusicPanel.vue';
 import RvcSingingPanel from '../components/music/RvcSingingPanel.vue';
@@ -146,12 +158,14 @@ const songs = useRvcSongs({
   canPlay: () => isSinging.value && streamScheduleState.value.phase !== 'ending',
   onBeforePlay: () => {
     concertDirector.beforePlay();
+    asrRecorder?.setBargeInEnabled(false);
     liveDirectorSessionId++;
     cancelLiveConversation({ preserveAudience: true });
     asrRecorder?.setSuppressed(true);
   },
   onManualPause: () => concertDirector.hold(),
   onPlaybackChange: (status, patch) => {
+    asrRecorder?.setBargeInEnabled(allowVoiceInterruption.value && !['playing', 'loading'].includes(status));
     if (isSinging.value) dispatchCharacterState(status === 'playing' ? 'speaking' : 'idle', { holdMs: 2000, arousal: status === 'playing' ? 0.6 : 0.28 });
     if (status === 'playing') concertDirector.songStarted(patch.track);
     if (status === 'error') concertDirector.songFailed(patch.track);
@@ -1152,8 +1166,10 @@ async function init() {
     }
   });
   asrRecorder = createLive2DAsrRecorder({
+    onSpeechStart: () => interruptForConversation(),
     onState: (patch) => {
       asrState.value = { ...asrState.value, ...patch };
+      if (patch.status === 'listening' && !patch.suppressed && patch.level > .08) conversationListeningUntil = Date.now() + 2000;
       if (patch.status === 'listening') {
         dispatchCharacterState('listening', { holdMs: 1600, attention: 0.9, arousal: 0.44 });
       } else if (patch.status === 'transcribing') {
@@ -1161,10 +1177,12 @@ async function init() {
       }
     },
     onResult: ({ text }) => {
+      conversationListeningUntil = 0;
       submitAudienceLine(text, { source: 'asr' });
     }
   });
   asrRecorder.setInputGain(micGain.value / 100, { persist: false });
+  asrRecorder.setBargeInEnabled(allowVoiceInterruption.value);
   asrRecorder.setSuppressed(songBusy.value);
   await live2d.init();
   setLocalItemEditorEnabled(true);
@@ -1417,6 +1435,7 @@ async function performStreamingLiveTurn(message, options = {}) {
     !speechPlayer
   ) return null;
   throwIfLiveTurnOperationCancelled(options);
+  if (options.audienceLines?.length) affectRuntime.observe(options.audienceLines.map(line => line.text || line.message || '').join('\n'));
   liveLlmRequestCount += 1;
   const logId = uid('yachiyo-stream');
   const playbackPromises = [];
@@ -1545,7 +1564,12 @@ async function performStreamingLiveTurn(message, options = {}) {
             resolved: preparedCaption.ready
           });
           publishPreparedCaption(visibleSentence);
-          if (sentence.live2d) {
+          if (sentence.performance) {
+            dispatchedStreamLive2DCount += 1;
+            const body = performanceBodyIntent(sentence.performance);
+            if (body) dispatchRoomLive2D(body);
+          }
+          else if (sentence.live2d) {
             dispatchedStreamLive2DCount += 1;
             dispatchRoomLive2D(alignLive2DToSpeech(sentence.live2d, durationMs));
           }
@@ -1580,6 +1604,7 @@ async function performStreamingLiveTurn(message, options = {}) {
                 ? Math.max(0, Number(options.interTurnPauseMs) || 0)
                 : 0,
               emotion: sentence.emotion,
+              performance: sentence.performance,
               speechStyle: sentence.speechStyle,
               sourceLang: sentence.sourceLang || undefined,
               startGate: captionPlaybackGate,
@@ -1625,7 +1650,7 @@ async function performStreamingLiveTurn(message, options = {}) {
       );
       visibleReply = preparedCaptionTranscript.read() || finalVisibleCaption || streamedReply;
     }
-    if (queuedSpeechCount > 0 && finalResult.live2d && queuedLive2DCount < 1) {
+    if (live2d.mode.value !== 'unity' && queuedSpeechCount > 0 && finalResult.live2d && queuedLive2DCount < 1) {
       const dispatchFallbackLive2D = () => {
         if (!isLiveTurnOperationCurrent(options) || dispatchedStreamLive2DCount > 0) return;
         dispatchedStreamLive2DCount += 1;
@@ -1708,9 +1733,10 @@ async function performStreamingLiveTurn(message, options = {}) {
             interTurnPauseMs: Math.max(0, Number(options.interTurnPauseMs) || 0),
             emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral',
             speechStyle: finalResult.live2d?.speechStyle || null,
+            performance: finalResult.performance,
             sourceLang: finalResult.caption ? 'ja' : undefined,
             startGate: captionPlaybackGate,
-            onStart: ({ durationMs }) => {
+            onStart: ({ durationMs, performance }) => {
               if (!isLiveTurnOperationCurrent(options)) return;
               emitLiveTurnTelemetry(options, 'tts-start');
               const caption = preparedCaption.read();
@@ -1719,7 +1745,9 @@ async function performStreamingLiveTurn(message, options = {}) {
                 resolved: finalCaptionReady
               });
               publishFinalCaption(caption);
-              if (finalResult.live2d) dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, durationMs));
+              const body = performanceBodyIntent(performance);
+              if (body) dispatchRoomLive2D(body);
+              if (finalResult.live2d && !performance) dispatchRoomLive2D(alignLive2DToSpeech(finalResult.live2d, durationMs));
               dispatchStreamingSpeechStart(durationMs, {
                 emotion: finalResult.live2d?.emotion || finalResult.live2d?.expression || 'neutral'
               });
@@ -1778,6 +1806,7 @@ async function performStreamingLiveTurn(message, options = {}) {
       if (
         isLiveTurnOperationCurrent(options) &&
         queuedSpeechCount > 0 &&
+        live2d.mode.value !== 'unity' &&
         finalResult.live2d &&
         queuedLive2DCount > 0 &&
         dispatchedStreamLive2DCount < 1
@@ -1934,6 +1963,10 @@ function handleLivePlaybackIdle() {
 
 async function runLiveTurn(trigger = {}) {
   streamSchedule.tick();
+  if (!liveDirector.running) return;
+  if (!pendingStreamCue && (Date.now() < conversationListeningUntil || (asrRecorder?.isRecording() && !asrRecorder?.isContinuous()))) {
+    liveDirectorScheduler.schedule(500); return;
+  }
   const playbackPrefetch = trigger?.reason === 'playback-prefetch';
   if (
     songBusy.value ||
@@ -2159,6 +2192,7 @@ function startLiveDirector() {
 }
 
 function stopLiveDirector({ completed = false } = {}) {
+  conversationListeningUntil = 0;
   const wasRunning = liveDirector.running;
   liveDirectorSessionId += 1;
   liveDirector.running = false;
@@ -2176,6 +2210,7 @@ function stopLiveDirector({ completed = false } = {}) {
 }
 
 function cancelLiveConversation({ preserveAudience = false } = {}) {
+  affectRuntime.invalidate();
   window.TSUKUYOMI_AVATAR_DRIVER?.cancel();
   window.clearTimeout(bilibiliBatchTimer);
   bilibiliBatchTimer = 0;
@@ -2215,9 +2250,30 @@ function routeAudienceMusicRequest(text, meta = {}, audienceEntry = null) {
   return routed;
 }
 
+function interruptForConversation() {
+  if (songBusy.value) return;
+  conversationListeningUntil = Date.now() + 8000;
+  if (speechState.value.status === 'playing' || speechState.value.status === 'loading' || liveTurnsInFlight > 0) {
+    liveDirectorSessionId++;
+    // Preserve arrivals that have not been selected, but never requeue the
+    // utterance the listener explicitly interrupted.
+    const waiting = audienceQueue.value.slice();
+    cancelLiveConversation();
+    audienceQueue.value = waiting;
+    liveDirector.status = 'idle';
+  }
+  dispatchCharacterState('listening', { holdMs: 15000 });
+}
+
 function submitAudienceLine(text, meta = {}) {
   const value = String(text || '').trim();
   if (!value) return;
+  if (!meta.source || meta.source === 'asr') {
+    interruptForConversation();
+    conversationListeningUntil = 0;
+    if (meta.source !== 'asr') asrRecorder?.invalidatePending();
+    affectRuntime.observe(value);
+  }
   if (!meta.keepInput) audienceInput.value = '';
   if (!canCollectLiveAudience()) {
     pushLog('audience', value, meta);
@@ -2269,6 +2325,7 @@ async function toggleAudienceAsr() {
       await asrRecorder.stop();
       return;
     }
+    interruptForConversation();
     const settings = readRoomASRSettings();
     if (!settings.enabled) writeRoomASRSettings({ ...settings, enabled: true });
     asrRecorder.setInputGain(micGain.value / 100);
@@ -2546,6 +2603,7 @@ function stopAvatarPerformance() {
 }
 
 onMounted(() => {
+  window.addEventListener('yachiyo:performance-state', onPerformanceState);
   window.addEventListener('yachiyo:avatar-stop', stopAvatarPerformance);
   setLive2DMusicSuspended(isSinging.value);
   window.addEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
@@ -2561,6 +2619,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('yachiyo:performance-state', onPerformanceState);
   window.removeEventListener('yachiyo:avatar-stop', stopAvatarPerformance);
   setLive2DMusicSuspended(false);
   window.removeEventListener(SETTINGS_SAVED_EVENT, handleStudioSettingsSaved);
@@ -2909,13 +2968,14 @@ onUnmounted(() => {
         </p>
         <p v-else-if="asrState.status === 'listening' || asrState.status === 'transcribing'" class="live2d-inline-status">
           {{ asrState.suppressed
-            ? '持续语音已开启 · 播报时防回声暂停'
+            ? (allowVoiceInterruption ? '持续聆听 · 可以开口打断' : '持续语音已开启 · 播报时防回声暂停')
             : (asrState.transcribing
               ? '持续聆听中 · 正在识别上一句'
               : (asrState.continuous ? '持续语音输入已开启' : (asrState.status === 'listening' ? '正在聆听...' : '正在识别...'))) }}
         </p>
       </section>
 
+      <p v-if="live2d.mode.value === 'unity'" class="live2d-inline-status" aria-live="polite">{{ performanceLabel }}</p>
       <div v-if="isSinging" class="rvc-mode-notice">{{ concertDisplay }}</div>
       <nav v-else class="live2d-workspace-tabs" aria-label="直播工具">
         <button
@@ -2998,9 +3058,12 @@ onUnmounted(() => {
             <TsIcon :name="asrState.continuous ? 'radio' : 'mic'" :size="18" />
             <span>
               <strong>{{ asrState.continuous ? '停止全程语音输入' : '全程开启语音输入' }}</strong>
-              <small>{{ asrState.continuous ? '自动分句识别中，八千代说话时自动防回声' : '自动检测说话与停顿，无需反复点击' }}</small>
+              <small>{{ asrState.continuous ? (allowVoiceInterruption ? '持续聆听，可开口打断八千代' : '自动分句识别中，八千代说话时自动防回声') : '自动检测说话与停顿，无需反复点击' }}</small>
             </span>
           </button>
+          <label v-if="live2d.mode.value === 'unity'" class="live2d-inline-status">
+            <input v-model="allowVoiceInterruption" type="checkbox" @change="updateVoiceInterruption">允许语音插话（建议戴耳机）
+          </label>
           <section class="live2d-volume-panel" aria-label="Audio monitor">
             <div>
               <span>麦克风输入增益</span>

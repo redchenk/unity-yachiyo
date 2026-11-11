@@ -30,3 +30,16 @@ Detailed runtime reports and screenshots stay in local artifacts/ and are not pu
 - Existing unified audio regression passed for five visemes, singing pause/resume/seek/silence, cancellation and owned-service shutdown. No new paid LLM calls or audience messages were sent; Windows/Ubuntu motion generation was not changed by this update.
 
 Reproduce native conversation/framing coverage with `node director/tools/desktop/verify-conversation.mjs`; installed-page streaming coverage uses `node director/tools/desktop/verify-tts.mjs`. Both require the local licensed model and a built Mac application, and keep reports under ignored `artifacts/`.
+
+## Persistent affect and performance planning — 2026-11-11
+
+- Frontend build and Unity macOS build passed; the unified app was installed and passed deep/strict signing checks. Director tests: 45 passed, 1 skipped (external NSIS compiler).
+- Seven actual WKWebView audio → native Unity scenarios passed: gratitude, reassurance, explanation, teasing, surprise, restrained refusal and quiet listening. Face preset and gaze intent reached Unity; the reduced expression survived utterance end. Six expressive plans fired bounded onset cues; quiet listening fired none and had zero ambient arm gain.
+- Native hand displacement was 11.6 cm in the explanation sample and 0.47 cm in quiet listening. Utterance end and cancellation returned speech weight and mouth opening to zero. This measures native execution, not human-like quality.
+- The installed page test interrupted a playing sentence with a local text message. The old Audio element was paused and released, its queued second sentence never played, and the next generation received listener-distress context. The new plan reached Unity as `ConcernedWarm` with no arm gestures.
+- Continuous-recorder tests verified opt-in gating after requested browser echo cancellation, retained voice onset samples, old-recognition invalidation, fresh recognition and microphone track cleanup. No physical microphone or loudspeaker echo test was performed; voice interruption remains off by default.
+- The installed page played the complete five-second fragmented unknown-length WAV fixture, drove 287 mouth frames and closed the real mouth after stop. Unified regression passed for five visemes, singing pause/resume/seek/silence, cancellation and owned-service shutdown. Camera button/slider/lock/reset/zoom regression also passed.
+- The configured real GPT-SoVITS endpoint returned HTTP 503, and the prior laptop address was unreachable. The user chose to continue available validation. Real-provider voice quality, live LLM choices and new Windows/Ubuntu generation were not accepted in this run. No paid LLM request or real audience message was sent.
+- Exact word alignment is intentionally not claimed: current cues use decoded audio onset and playback time. Unavailable/ambiguous/changed-text semantic anchors are skipped; there is no deployed forced aligner. GPT-SoVITS receives bounded speed, with the reference audio/transcript preserved; emotion-specific reference-voice calibration remains separate.
+
+Reproduce with `node director/tools/desktop/verify-performance.mjs` and `node director/tools/desktop/verify-interruption.mjs`. Both require the built private Mac application and keep all runtime evidence under ignored `artifacts/performance-validation/`.

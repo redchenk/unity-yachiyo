@@ -1,3 +1,5 @@
+import { affectRuntime, performancePrompt } from './performancePlan.mjs';
+const unityPerformance = () => typeof window !== 'undefined' && window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity';
 import { liveChatModelOptions } from '../../../shared/chat-model-options.mjs';
 import { boundedConversation, followupRetrievalQuery } from '../../../shared/retrieval-context.mjs';
 import { buildYachiyoCanonPrompt } from './yachiyoCanon';
@@ -467,7 +469,8 @@ function createReplySentenceEmitter(handlers = {}) {
     const live2d = beat
       ? buildBeatLive2DIntent(sentence, beat, analysis.emotion, analysis.speechStyle)
       : buildSentenceLive2DIntent(sentence, analysis.emotion, analysis.speechStyle);
-    const emotion = live2d?.emotion || live2d?.expression || analysis.emotion;
+    const performance = unityPerformance() ? affectRuntime.plan(beat || {}, sentence) : null;
+    const emotion = performance?.emotion || live2d?.emotion || live2d?.expression || analysis.emotion;
     const captionSlot = createCaptionSlot(emittedCount);
     emittedCount += 1;
     handlers.onSentence?.({
@@ -477,7 +480,8 @@ function createReplySentenceEmitter(handlers = {}) {
       captionReady: captionSlot.promise,
       sourceLang: options.sourceLang || '',
       emotion,
-      speechStyle: live2d?.speechStyle || speechStyle,
+      speechStyle: performance ? { speed: performance.speed, energy: performance.energy } : live2d?.speechStyle || speechStyle,
+      performance,
       live2d,
       beat
     });
@@ -930,6 +934,7 @@ export function parseLive2DControlPayload(rawText) {
       reply: reply || 'OK.',
       caption,
       live2d,
+      performance: unityPerformance() ? affectRuntime.plan(data, reply) : null,
       music: normalizeMusicFromPayload(data),
       minecraft: normalizeMinecraftFromPayload(data),
       minecraftGoal: String(data.minecraftGoal || data.minecraft_goal || '').trim().slice(0, 500) || null,
@@ -1348,10 +1353,10 @@ export function live2DControlSystemPrompt() {
     'JSON schema:',
     `{"reply":"short visible reply","acknowledgedIndexes":[],"emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"minecraft":null,"minecraftGoal":null,"memory_writes":[]}`,
     'The reply field must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, or pose descriptions in reply.',
-    'The actions field is required and must contain at least 2 semantic actions. If the moment is calm, use look_at_chat + breathe.',
+    unityPerformance() ? 'In Unity use performance for speech delivery. Legacy actions may be empty. Quiet attentive replies are welcome.' : 'The actions field is required and must contain at least 2 semantic actions. If the moment is calm, use look_at_chat + breathe.',
     'Actions must match the reply meaning and mood. Vary action combos between turns; do not repeat the same body action unless the dialogue specifically calls for it.',
     'Use only semantic emotion ids and semantic actions. Do not output raw Live2D parameters, VTube Studio parameter ids, expression file names, live2d.parameters, parameterTargets, or pose descriptions.',
-    `Choose 2-5 actions per live-stream turn. Good combos: ${behaviorActionComboPrompt()}.`,
+    unityPerformance() ? performancePrompt() : `Choose 2-5 actions per live-stream turn. Good combos: ${behaviorActionComboPrompt()}.`,
     'Use intensity 0.45-0.85 for normal talking, 0.85-1.0 for punchlines or surprise.',
     'Optional interruptPolicy controls action orchestration: use mode blend for normal replies, replace for urgent reactions, protect for moments that should finish; priority is 0-10.',
     'Optional music controls the song request engine. Only include it when the user explicitly asks to request, play next, skip, pause, resume, stop, clear, or inspect music; otherwise set music to null.',
@@ -1385,7 +1390,7 @@ export function live2DStreamingControlSystemPrompt() {
     'Do not output tiny filler-only VOICE chunks. Do not quote a viewer message verbatim; respond to its meaning.',
     'Never put JSON, stage directions, parentheses, asterisk actions, pose descriptions, or action labels in VOICE or CAPTION.',
     typeof window !== 'undefined' && window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity'
-      ? `Use 1-3 concise semantic actions per BEAT from the connected Unity catalog below. ${behaviorActionComboPrompt()}\n${semanticActionPromptCatalog()}`
+      ? `Legacy actions may be empty. ${performancePrompt()}\n${semanticActionPromptCatalog()}`
       : 'Use 1-3 concise semantic actions per BEAT from: look_at_chat, smile, nod, head_tilt, sway, breathe, bounce, lean_in, wave, wink, smirk, surprised.',
     'CONTROL reply and caption must exactly concatenate the emitted VOICE and CAPTION lines. Include every actually addressed 1-based audience index in acknowledgedIndexes, especially every gift, superchat, or guard purchase.',
     'For any explicit song request, including 点歌, 我要听, 想听, 听一首, 来一首, 唱一首, or 放一首, set music to {"action":"request","query":"song title artist"}; FIFO requests must not interrupt the current track. Use play_next only when explicitly requested.',

@@ -6,6 +6,8 @@ namespace Yachiyo {
   float speechBlend,speechLevel,speechClock,speechAt,gestureClock,gestureDuration,gestureBlend,gestureStrength;
   float headClock,headDuration,headBlend,headStrength;
   int speechPhrase;
+  float conversationAmount=1,conversationEnergy=.5f;
+  bool timedGesture,timedHead;float gestureStart,headStart,gesturePrepare,gestureRelease,headPrepare,headRelease;
   string gesture="",gestureSide="right";
   string headGesture="",headSide="right";
   public float SpeechBodyWeight=>speechBlend;
@@ -19,9 +21,21 @@ namespace Yachiyo {
   public void SpeechFrame(float time,float level){speechClock=Mathf.Max(0,time);speechLevel=Mathf.Clamp01(level);speechAt=Time.unscaledTime;}
   public void Gesture(string type,float duration,float strength,string side){
    if(type=="nod"||type=="head_tilt"||type=="shake_head"){
+    timedHead=false;
     headGesture=type;headClock=0;headDuration=Mathf.Clamp(duration,.35f,15f);headStrength=Mathf.Clamp01(strength);headSide=side;return;
    }
+   timedGesture=false;
    gesture=type;gestureClock=0;gestureDuration=Mathf.Clamp(duration,.35f,15f);gestureStrength=Mathf.Clamp01(strength);gestureSide=side;
+  }
+  public void SetConversationPerformance(float amount,float energy){conversationAmount=Mathf.Clamp01(amount);conversationEnergy=Mathf.Clamp01(energy);}
+  public void GestureTimed(string type,float start,float duration,float prepare,float release,float strength,string side){
+   Gesture(type,duration,strength,side);
+   if(type=="nod"||type=="head_tilt"||type=="shake_head"){timedHead=true;headStart=start;headPrepare=prepare;headRelease=release;}
+   else{timedGesture=true;gestureStart=start;gesturePrepare=prepare;gestureRelease=release;}
+  }
+  static float SpeechEnvelope(float clock,float length,float prepare,float release){
+   if(clock<0||clock>=length)return 0;
+   return Mathf.SmoothStep(0,1,Mathf.Clamp01(clock/Mathf.Max(.05f,prepare)))*Mathf.SmoothStep(0,1,Mathf.Clamp01((length-clock)/Mathf.Max(.05f,release)));
   }
   public void SetConversationEmotion(string emotion){if(!string.IsNullOrEmpty(emotion))stateEmotion=emotion.ToLowerInvariant();}
   public void EndConversationGesture(){gestureDuration=0;headDuration=0;}
@@ -34,22 +48,23 @@ namespace Yachiyo {
    // A real playback frame owns this layer. Short sentences start immediately;
    // stalls, pause and cancel release it without queuing a delayed body action.
    speechBlend=Mathf.MoveTowards(speechBlend,speechActive&&!modelPlaying&&!localPlaying?1:0,dt/(speechActive ? .2f : .28f));
-   gestureClock+=dt;
-   float desired=gestureClock<gestureDuration?ActionEnvelope(gestureClock,gestureDuration):0;
+   gestureClock=timedGesture?speechClock-gestureStart:gestureClock+dt;
+   float desired=timedGesture?SpeechEnvelope(gestureClock,gestureDuration,gesturePrepare,gestureRelease):gestureClock<gestureDuration?ActionEnvelope(gestureClock,gestureDuration):0;
    gestureBlend=Mathf.MoveTowards(gestureBlend,desired,dt/.18f);
    float g=gestureBlend*gestureStrength;
-   headClock+=dt;
-   headBlend=Mathf.MoveTowards(headBlend,headClock<headDuration?ActionEnvelope(headClock,headDuration):0,dt/.18f);
+   headClock=timedHead?speechClock-headStart:headClock+dt;
+   headBlend=Mathf.MoveTowards(headBlend,timedHead?SpeechEnvelope(headClock,headDuration,headPrepare,headRelease):headClock<headDuration?ActionEnvelope(headClock,headDuration):0,dt/.18f);
 
    if(!modelPlaying&&!localPlaying){
     if(speechBlend>.001f){
-     float energy=stateEmotion.Contains("sad") ? .55f : stateEmotion.Contains("happy")?1.1f:1;
+     float energy=.5f+conversationEnergy;
      float amount=speechBlend*energy*(.55f+speechLevel*.7f);
      float beat=Mathf.Sin(speechClock*3.2f),side=(speechPhrase%2==0?-1:1);
      float swap=Mathf.Sin(speechClock*.95f+speechPhrase*.8f);
      float armShare=(gesture=="explain"||gesture=="emphasis"||gesture=="open_palms")?1-g:1;
-     ArmGesture(false,armShare*amount*(.65f-.25f*swap),speechClock, false);
-     ArmGesture(true,armShare*amount*(.65f+.25f*swap),speechClock+.7f, false);
+     ArmGesture(false,conversationAmount*armShare*amount*(.65f-.25f*swap),speechClock, false);
+     ArmGesture(true,conversationAmount*armShare*amount*(.65f+.25f*swap),speechClock+.7f, false);
+     amount*=.25f+conversationAmount*.75f;
      RotateLocal(HumanBodyBones.Chest,new Vector3(beat*1.3f*amount,side*amount*2.8f,swap*amount*1.4f));
      RotateLocal(HumanBodyBones.Neck,new Vector3(beat*1.5f*amount,0,side*amount*1.3f));
      RotateLocal(HumanBodyBones.Head,new Vector3(beat*1.8f*amount,-side*amount*1.5f,0));

@@ -1,4 +1,5 @@
 import { attachAudioMouthAnalyser } from './audioMouthAnalyser.js';
+import { affectRuntime, compilePerformanceTimeline, publishPerformance } from './performancePlan.mjs';
 import { readLipsyncSettings } from './lipsyncSettings.js';
 import { CLOSED_MOUTH } from '../../../shared/audio-lipsync.mjs';
 import { playableTtsBlob } from '../../../shared/tts-audio.mjs';
@@ -388,6 +389,7 @@ function buildGptSovitsAudioUrl(text, settings) {
   url.searchParams.set('media_type', 'wav');
   url.searchParams.set('streaming_mode', 'true');
   url.searchParams.set('parallel_infer', 'false');
+  url.searchParams.set('speed_factor', String(Math.max(.9, Math.min(1.1, Number(settings.speechStyle?.speed) || 1))));
   url.searchParams.set('_', String(Date.now()));
   return url.toString();
 }
@@ -413,6 +415,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   let lastPlaybackEndedAt = 0;
   const speechQueue = [];
   const audioMeters = new WeakMap();
+  const audioBlobs = new WeakMap(), audioTiming = new WeakMap();
   let lipsyncSettings = readLipsyncSettings();
   const refreshLipsync = () => { lipsyncSettings = readLipsyncSettings(); };
   window.addEventListener?.('tsukuyomi:lipsync-settings', refreshLipsync);
@@ -617,10 +620,28 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   }
 
   async function createAudioFromBlob(blob) {
-    const url = URL.createObjectURL(await playableTtsBlob(blob));
+    const playable = await playableTtsBlob(blob);
+    const url = URL.createObjectURL(playable);
     const audio = new Audio(url);
+    audioBlobs.set(audio, playable);
     audio.dataset.objectUrl = url;
     return audio;
+  }
+
+  async function preparePerformanceAudio(audio) {
+    const blob = audioBlobs.get(audio);
+    if (!audioContext || !blob || blob.size > 20 * 1024 * 1024) return;
+    try {
+      const decoded = await audioContext.decodeAudioData(await blob.arrayBuffer());
+      const pcm = decoded.getChannelData(0), size = Math.max(1, Math.round(decoded.sampleRate * .02));
+      let onset = 0;
+      for (let i = 0; i < pcm.length; i += size) {
+        let power = 0; const n = Math.min(size, pcm.length - i);
+        for (let j = 0; j < n; j++) power += pcm[i + j] * pcm[i + j];
+        if (Math.sqrt(power / n) > .012) { onset = i / decoded.sampleRate; break; }
+      }
+      audioTiming.set(audio, { duration: decoded.duration, onset });
+    } catch (_) { /* Metadata/onset fallback keeps playback available. */ }
   }
 
   async function createFastAudioFromUrl(url, speechText = '', signal) {
@@ -669,6 +690,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       if (signal.aborted) throw makeStopError();
       const audio = await createFastAudioFromUrl(buildGptSovitsAudioUrl(ttsText, {
         ...settings,
+        speechStyle: options.performance ? { speed: options.performance.speed } : options.speechStyle,
         textLang: FORCED_TTS_LANGUAGE,
         promptLang: FORCED_TTS_LANGUAGE
       }), ttsText, signal);
@@ -686,14 +708,16 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         textLang: FORCED_TTS_LANGUAGE,
         promptLang: FORCED_TTS_LANGUAGE,
         emotion: normalizeTtsEmotion(options.emotion),
-        speechStyle: options.speechStyle || null
+        speechStyle: options.performance ? { ...options.speechStyle, speed: options.performance.speed } : options.speechStyle || null
       })
     }, TTS_FETCH_TIMEOUT_MS, 'TTS synthesis', async response => {
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
         throw new Error(payload?.message || `TTS ${response.status}`);
       }
-      return createAudioFromBlob(await response.blob());
+      const audio = await createAudioFromBlob(await response.blob());
+      audio.dataset.speechText = ttsText;
+      return audio;
     });
   }
 
@@ -784,14 +808,23 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         }
       }
       await prepareAudioMeter(audio);
+      if (window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity') await preparePerformanceAudio(audio);
       if (token !== queueToken) { releaseAudio(audio); throw makeStopError(); }
       currentAudio = audio;
       audio.preload = 'auto';
       let playbackStarted = false;
       let mouthLoopStarted = false;
+      let plannedPerformance;
       const startMouth = () => {
         if (currentAudio !== audio || audio.ended) return;
-        window.TSUKUYOMI_AVATAR_DRIVER?.audioStart(audio, { source: 'speech', turnId: options.turnId });
+        const finalText = audio.dataset.speechText || speechText;
+        if (plannedPerformance === undefined) plannedPerformance = window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity'
+          ? compilePerformanceTimeline(options.performance || affectRuntime.plan({}, finalText), {
+              ...audioTiming.get(audio), duration: audioTiming.get(audio)?.duration || audio.duration || 0, text: finalText
+            }) : null;
+        const plan = plannedPerformance;
+        window.TSUKUYOMI_AVATAR_DRIVER?.audioStart(audio, { source: 'speech', turnId: options.turnId, performance: plan });
+        if (!playbackStarted && plan) publishPerformance(plan);
         setState({ status: 'playing', error: '' });
         const mouthText = audio.dataset.speechText || speechText;
         if (!playbackStarted) {
@@ -800,7 +833,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
             ? Math.round(audio.duration * 1000)
             : 0;
           try {
-            options.onStart?.({ audio, speechText, mouthText, durationMs });
+            options.onStart?.({ audio, speechText, mouthText, durationMs, performance: plan });
           } catch (_) {
             // Keep speech playback alive even if a caller-side animation hook fails.
           }

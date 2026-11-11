@@ -2,7 +2,7 @@ export function buildTtsRequest(input) {
   if (!String(input.text || '').trim()) throw new Error('TTS text is required');
   const headers = { 'Content-Type': 'application/json' };
   if (!input.provider || input.provider === 'gpt-sovits') {
-    return { url: input.apiUrl || 'http://127.0.0.1:9880/tts', headers, body: { text: input.text, text_lang: 'ja', ref_audio_path: input.refAudioPath || input.voice, prompt_text: input.promptText || '', prompt_lang: 'ja', streaming_mode: true, media_type: 'wav', batch_size: 1, parallel_infer: false, text_split_method: 'cut5' } };
+    return { url: input.apiUrl || 'http://127.0.0.1:9880/tts', headers, body: { text: input.text, text_lang: 'ja', ref_audio_path: input.refAudioPath || input.voice, prompt_text: input.promptText || '', prompt_lang: 'ja', speed_factor: Math.min(1.1, Math.max(.9, Number(input.speechStyle?.speed) || 1)), streaming_mode: true, media_type: 'wav', batch_size: 1, parallel_infer: false, text_split_method: 'cut5' } };
   }
   if (input.provider === 'mimo') {
     headers['api-key'] = input.apiKey || '';

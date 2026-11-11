@@ -1,3 +1,4 @@
+import { createVoiceInterruptionGate } from './voiceInterruption.mjs';
 import {
   readRoomASRSettings,
   writeRoomASRSettings
@@ -216,7 +217,7 @@ async function transcribeCapturedSamples(captured, inputSampleRate, settings, in
   return { ...result, text, elapsedMs };
 }
 
-export function createLive2DAsrRecorder({ onState, onResult } = {}) {
+export function createLive2DAsrRecorder({ onState, onResult, onSpeechStart } = {}) {
   let stream = null;
   let audioContext = null;
   let source = null;
@@ -236,6 +237,8 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
   let activeSettings = readRoomASRSettings();
   let inputGain = activeSettings.inputGain;
   let recognitionTail = Promise.resolve();
+  let bargeInEnabled = false, recognitionEpoch = 0, preRoll = [];
+  const interruptionGate = createVoiceInterruptionGate();
 
   function cleanup() {
     window.clearTimeout(maxTimer);
@@ -281,10 +284,12 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
     const captured = flattenSamples(segmentChunks);
     const settings = { ...activeSettings };
     const segmentGain = inputGain;
+    const epoch = recognitionEpoch;
     pendingRecognitions += 1;
     setState(onState, listeningState({ error: '' }));
     recognitionTail = recognitionTail
       .then(async () => {
+        if (destroyed || epoch !== recognitionEpoch) return null;
         const result = await transcribeCapturedSamples(
           captured,
           inputSampleRate,
@@ -292,11 +297,11 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
           segmentGain,
           elapsedMs
         );
-        if (!destroyed && result?.text) onResult?.(result);
+        if (!destroyed && epoch === recognitionEpoch && result?.text) onResult?.(result);
         return result;
       })
       .catch((error) => {
-        if (!destroyed) {
+        if (!destroyed && epoch === recognitionEpoch) {
           setState(onState, listeningState({
             error: error?.message || 'ASR failed'
           }));
@@ -305,7 +310,7 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
       })
       .finally(() => {
         pendingRecognitions = Math.max(0, pendingRecognitions - 1);
-        if (!destroyed) setState(onState, listeningState({ error: '' }));
+        if (!destroyed && epoch === recognitionEpoch) setState(onState, listeningState({ error: '' }));
       });
     return recognitionTail;
   }
@@ -327,10 +332,12 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone capture is unavailable.');
 
     destroyed = false;
+    const epoch = ++recognitionEpoch;
+    recognitionTail = Promise.resolve();
     continuous = options.continuous === true;
     suppressed = false;
     inputGain = Number.isFinite(Number(inputGain)) ? inputGain : activeSettings.inputGain;
-    stream = await navigator.mediaDevices.getUserMedia({
+    const acquired = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
         noiseSuppression: true,
@@ -338,6 +345,8 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
         autoGainControl: true
       }
     });
+    if (destroyed || epoch !== recognitionEpoch) { acquired.getTracks().forEach(track => track.stop()); return; }
+    stream = acquired;
     audioContext = new AudioContextClass();
     source = audioContext.createMediaStreamSource(stream);
     processor = audioContext.createScriptProcessor(SCRIPT_PROCESSOR_BUFFER_SIZE, 1, 1);
@@ -351,6 +360,21 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
       const input = event.inputBuffer.getChannelData(0);
       event.outputBuffer?.getChannelData?.(0)?.fill(0);
       if (suppressed) {
+        if (bargeInEnabled && continuous) {
+          const copy = new Float32Array(input);
+          preRoll.push(copy); if (preRoll.length > 8) preRoll.shift();
+          let power = 0; for (const sample of copy) power += (sample * inputGain) ** 2;
+          const level = Math.sqrt(power / Math.max(1, copy.length));
+          if (interruptionGate.sample(level, now, activeSettings.vadThreshold)) {
+            const captured = preRoll.slice();
+            recognitionEpoch++; recognitionTail = Promise.resolve();
+            onSpeechStart?.();
+            suppressed = false; chunks = captured; preRoll = [];
+            segmentStartedAt = now - 300; speechStartedAt = now - 260; lastSpeechAt = now;
+            setState(onState, listeningState({ level: Math.min(1, level * 8), error: '' }));
+            return;
+          }
+        }
         resetSegment(now);
         if (now - lastLevelAt >= 80) {
           lastLevelAt = now;
@@ -408,6 +432,7 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
   async function stop() {
     if (!recording) return null;
     const wasContinuous = continuous;
+    const epoch = recognitionEpoch;
     const settings = { ...activeSettings };
     const inputSampleRate = audioContext?.sampleRate || settings.sampleRate;
     const elapsedMs = Math.max(0, performance.now() - startedAt);
@@ -439,6 +464,7 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
       elapsedMs
     );
     const text = result?.text || '';
+    if (destroyed || epoch !== recognitionEpoch) return null;
     setState(onState, { status: 'idle', continuous: false, error: '', text, elapsedMs, level: 0 });
     if (text) onResult?.(result);
     return result;
@@ -456,6 +482,7 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
   }
 
   function setSuppressed(value) {
+    if (Boolean(value) !== suppressed) { interruptionGate.reset(); preRoll = []; }
     suppressed = Boolean(value);
     if (suppressed) resetSegment();
     if (recording) setState(onState, listeningState({ level: 0 }));
@@ -471,6 +498,7 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
   }
 
   function destroy() {
+    recognitionEpoch++;
     destroyed = true;
     recording = false;
     continuous = false;
@@ -483,6 +511,8 @@ export function createLive2DAsrRecorder({ onState, onResult } = {}) {
     stop,
     setInputGain,
     setSuppressed,
+    invalidatePending() { recognitionEpoch++; recognitionTail = Promise.resolve(); },
+    setBargeInEnabled(value) { bargeInEnabled = Boolean(value); interruptionGate.reset(); preRoll = []; },
     isRecording,
     isContinuous,
     destroy

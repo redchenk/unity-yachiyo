@@ -50,14 +50,15 @@ export function createUnityAvatarDriver({ url, onStatus = () => {}, onReceipt = 
     return { ...intent, commandIds };
   }
   function state(detail = {}) { const emotion = detail.emotion || ''; if (emotion) lastEmotion = emotion; return send('state', { mode: detail.mode || 'idle', emotion, holdMs: Math.min(15000, Number(detail.holdMs) || 0) }); }
-  function audioStart(audio, { source = 'speech', turnId = '' } = {}) {
+  function audioStart(audio, { source = 'speech', turnId = '', performance = null } = {}) {
     if (!ready) return;
     let token = audioIds.get(audio);
     if (activeAudio === token && token?.epoch === epoch && token.sessionId === sessionId) return;
     if (activeAudio) audioEnd(activeAudio.audio);
     token = { audio, source, id: uuid(), turnId: turnId || uuid(), epoch, sessionId };
     audioIds.set(audio, token); activeAudio = token;
-    send('audio', { event: 'start', source, emotion: lastEmotion, audioTimeMs: Math.round((audio.currentTime || 0) * 1000) }, { turnId: token.turnId, utteranceId: token.id });
+    if (performance?.emotion) lastEmotion = performance.emotion;
+    send('audio', { event: 'start', source, emotion: lastEmotion, performance, audioTimeMs: Math.round((audio.currentTime || 0) * 1000) }, { turnId: token.turnId, utteranceId: token.id });
   }
   function audioEnd(audio, event = 'end') {
     const token = audioIds.get(audio);

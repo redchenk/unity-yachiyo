@@ -5,4 +5,5 @@ import { dispatchRoomLive2D } from '../../src/frontend/services/room/live2dContr
 import { createRvcSongPlayer } from '../../src/frontend/services/room/rvcSongPlayer.js';
 import { buildVocalTimeline } from '../../src/frontend/services/room/rvcVocalTimeline.js';
 import { parseLive2DControlPayload, live2DStreamingControlSystemPrompt } from '../../src/frontend/services/room/live2dLlmControl.js';
-window.__avatarTools = { createLive2DSpeechPlayer, saveLipsyncSettings, dispatchRoomLive2D, createRvcSongPlayer, buildVocalTimeline, parseLive2DControlPayload, live2DStreamingControlSystemPrompt };
+import { affectRuntime, compilePerformanceTimeline } from '../../src/frontend/services/room/performancePlan.mjs';
+window.__avatarTools = { affectRuntime, compilePerformanceTimeline, createLive2DSpeechPlayer, saveLipsyncSettings, dispatchRoomLive2D, createRvcSongPlayer, buildVocalTimeline, parseLive2DControlPayload, live2DStreamingControlSystemPrompt };

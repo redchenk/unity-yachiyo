@@ -155,7 +155,7 @@ namespace Yachiyo {
    ApplyConversation(dt,clip!=null,localAction!="idle");
    float blend=Mathf.SmoothStep(0,1,Mathf.Clamp01(blendClock/0.3f));
    if(blend<1){foreach(var p in transition)bones[p.Key].localRotation=Quaternion.Slerp(p.Value,bones[p.Key].localRotation,blend);bones[HumanBodyBones.Hips].localPosition=Vector3.Lerp(transitionHips,bones[HumanBodyBones.Hips].localPosition,blend);}
-   if(followPointer&&clip==null&&localAction=="idle") {
+   if(followPointer&&clip==null&&localAction=="idle"&&!speechActive&&!ConversationGestureActive) {
     float x=Mathf.Clamp((Input.mousePosition.x/Mathf.Max(1,Screen.width)-0.5f)*2,-1,1),y=Mathf.Clamp((Input.mousePosition.y/Mathf.Max(1,Screen.height)-0.5f)*2,-1,1);
     RotateLocal(HumanBodyBones.Head,new Vector3(-y*7,x*12,0));
    }

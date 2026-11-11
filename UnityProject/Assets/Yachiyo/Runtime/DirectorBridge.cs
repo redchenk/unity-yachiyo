@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace Yachiyo {
  // Network tasks only move UTF-8 messages. All avatar/Unity API calls run in Update.
- public sealed class DirectorBridge : MonoBehaviour {
+ public sealed partial class DirectorBridge : MonoBehaviour {
   public StudioUI ui;public AvatarMotion avatar;public YachiyoFaceController face;
   public string endpoint="ws://127.0.0.1:3289/avatar?role=unity";
   public string Status {get;private set;}="导演台未连接";
@@ -33,6 +33,7 @@ namespace Yachiyo {
    public string type,kind,sessionId,commandId,turnId,utteranceId,state,reason;public int epoch;public long seq;public Payload payload;
   }
   [Serializable]public class Payload {
+   public PerformancePlan performance;
    public string emotion,mode,interruptPolicy,@event,source,bodyMode,action,text;public float intensity,durationMs,holdMs,value,a,i,u,e,o;public int priority,audioTimeMs;public bool silence;public Behavior[] actions;
   }
   [Serializable]public class Behavior {public string type,side,target;public float durationMs,delayMs,intensity;}
@@ -93,8 +94,9 @@ namespace Yachiyo {
     try{var msg=JsonUtility.FromJson<Message>(text);if(msg.type=="ping"){Send(new Message{type="ping"});SendReady();continue;}Handle(msg);}catch(Exception e){Debug.LogWarning("DIRECTOR_FRAME_REJECTED "+e.GetType().Name);}
    }
    if(transportConnected&&ui.CameraRevision!=cameraRevision&&Time.unscaledTime>nextCameraStatus){cameraRevision=ui.CameraRevision;nextCameraStatus=Time.unscaledTime+.12f;SendReady();}
-   if(emotionUntil>0&&Time.unscaledTime>emotionUntil){face.SetEmotion(FaceEmotion.Neutral);emotionUntil=0;}
+   if(emotionUntil>0&&Time.unscaledTime>emotionUntil){RestoreAffect();emotionUntil=0;}
    if(gazeUntil>0&&Time.unscaledTime>gazeUntil){face.SetLookTarget(null);gazeUntil=0;}
+   UpdatePerformanceGaze();
    if(execution==null&&performances.Count>0){active=performances.Dequeue();execution=StartCoroutine(Execute(active,generation));}
   }
   void Handle(Message msg){
@@ -133,16 +135,16 @@ namespace Yachiyo {
      Receipt(msg,"accepted");performances.Enqueue(msg);break;
     case "state":
      avatar.SetCharacterState(p.mode,p.emotion,p.holdMs);
-     if(active==null){if(!string.IsNullOrEmpty(p.emotion))Emotion(p.emotion,.65f,p.holdMs);else if(p.mode=="thinking")Emotion("thinking",.5f,2400);else if(p.mode=="idle"||p.mode=="listening")face.SetEmotion(FaceEmotion.Neutral);}
+     if(active==null&&speechPlan==null){if(!string.IsNullOrEmpty(p.emotion))Emotion(p.emotion,.65f,p.holdMs);else if(p.mode=="thinking")Emotion("thinking",.35f,2400);else if(p.mode=="idle"||p.mode=="listening"){RestoreAffect();emotionUntil=0;}}
      break;
     case "audio":
      Debug.Log("DIRECTOR_AUDIO "+p.@event+" seq="+msg.seq+" current="+(msg.utteranceId==utterance));
-     if(p.@event=="start"&&!string.IsNullOrEmpty(msg.utteranceId)){utterance=msg.utteranceId;mouthClock=-1;face.CloseAudioMouth();avatar.SpeechAudio(p.source=="speech");if(p.source=="speech")avatar.SetCharacterState("speaking",p.emotion,15000);}
-     else if(msg.utteranceId==utterance){CancelSpeechPerformances(utterance);utterance="";face.CloseAudioMouth();avatar.SpeechAudio(false);}
+     if(p.@event=="start"&&!string.IsNullOrEmpty(msg.utteranceId)){utterance=msg.utteranceId;mouthClock=-1;face.CloseAudioMouth();avatar.SpeechAudio(p.source=="speech");if(p.source=="speech"){avatar.SetCharacterState("speaking",p.emotion,15000);StartPerformance(p.performance);}}
+     else if(msg.utteranceId==utterance){CancelSpeechPerformances(utterance);utterance="";face.CloseAudioMouth();avatar.SpeechAudio(false);EndPerformance();}
      break;
     case "mouth":
      if(string.IsNullOrEmpty(utterance)||msg.utteranceId!=utterance||p.audioTimeMs<mouthClock)return;
-     mouthClock=p.audioTimeMs;avatar.SpeechFrame(p.audioTimeMs/1000f,p.value);ReceivedMouthFrames++;face.SetAudioMouth(p.value,p.a,p.i,p.u,p.e,p.o,p.silence);break;
+     mouthClock=p.audioTimeMs;avatar.SpeechFrame(p.audioTimeMs/1000f,p.value);AdvancePerformance(p.audioTimeMs);ReceivedMouthFrames++;face.SetAudioMouth(p.value,p.a,p.i,p.u,p.e,p.o,p.silence);break;
    }
   }
   IEnumerator Execute(Message msg,int version){
@@ -185,6 +187,11 @@ namespace Yachiyo {
    avatar.SetConversationEmotion(name);
    string n=(name??"").ToLowerInvariant();FaceEmotion e=FaceEmotion.Neutral;
    if(n.Contains("happy")||n.Contains("smil")||n.Contains("joy")||n.Contains("smirk")||n.Contains("excited"))e=FaceEmotion.Happy;
+   else if(n=="concerned_warm")e=FaceEmotion.ConcernedWarm;
+   else if(n=="warm")e=FaceEmotion.Warm;
+   else if(n=="shy")e=FaceEmotion.Shy;
+   else if(n=="playful")e=FaceEmotion.Playful;
+   else if(n=="serious")e=FaceEmotion.Serious;
    else if(n.Contains("surpris")||n.Contains("shock"))e=FaceEmotion.Surprised;
    else if(n.Contains("sad")||n.Contains("cry")||n.Contains("worried"))e=FaceEmotion.Sad;
    else if(n.Contains("think")||n.Contains("curious"))e=FaceEmotion.Thinking;
@@ -209,7 +216,7 @@ namespace Yachiyo {
    if(avatar)avatar.EndConversationGesture();
    if(ui&&avatar)ui.StopMotion(true);
   }
-  void Clear(string reason){CancelPerformances(reason);if(avatar)avatar.ResetConversation();utterance="";mouthClock=-1;seen.Clear();emotionUntil=0;gazeUntil=0;if(face){face.CloseAudioMouth();face.SetEmotion(FaceEmotion.Neutral);face.SetLookTarget(null);}}
+  void Clear(string reason){CancelPerformances(reason);if(avatar)avatar.ResetConversation();utterance="";mouthClock=-1;seen.Clear();emotionUntil=0;gazeUntil=0;if(face){face.CloseAudioMouth();EndPerformance();face.SetLookTarget(null);}}
   void OnDestroy(){if(ui)ui.LocalStopRequested-=LocalStop;lifetime?.Cancel();Clear("destroyed");if(gaze)Destroy(gaze.gameObject);}
   void OnGUI(){
    if(!font)return;float scale=Mathf.Min(Screen.width/1280f,Screen.height/800f);var old=GUI.matrix;GUI.matrix=Matrix4x4.Scale(new Vector3(scale,scale,1));

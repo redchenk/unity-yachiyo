@@ -14,6 +14,7 @@ namespace Yachiyo {
    public float[] maxVisemes=new float[5];public string lastReceipt,motionSource;
    public float speechBodyWeight,maxSpeechBodyWeight,cameraX,cameraY,cameraYaw,cameraPitch,cameraDistance;
    public Vector3 leftHand,rightHand,screenHead;public string gesture;
+   public string performanceIntent,faceEmotion,performanceGaze,lastCue;public int cuesFired,performanceClock,lastCueClock;public float gestureAmount;
   }
   void Start(){var args=Environment.GetCommandLineArgs();int p=Array.IndexOf(args,"--verify-director");if(p<0||p+1>=args.Length){enabled=false;return;}path=args[p+1];}
   void LateUpdate(){
@@ -21,6 +22,7 @@ namespace Yachiyo {
    report.audioActive=!string.IsNullOrEmpty(bridge.ActiveUtterance);report.bodyPlaying=bridge.avatar.Playing;report.localActionActive=bridge.avatar.LocalActionActive;report.localActionSeen|=report.localActionActive;report.happySeen|=face.Emotion==FaceEmotion.Happy;
    if(report.bodyPlaying){report.generatedMotionSeen=true;report.motionSource=bridge.avatar.MotionSource;}
    report.mouthOpen=face.AudioMouthOpen;report.lastReceipt=bridge.LastReceipt;
+   report.performanceIntent=bridge.PerformanceIntent;report.faceEmotion=face.Emotion.ToString();report.performanceGaze=bridge.PerformanceGaze;report.cuesFired=bridge.PerformanceCuesFired;report.performanceClock=bridge.PerformanceClock;report.gestureAmount=bridge.PerformanceGestureAmount;report.lastCue=bridge.LastCue;report.lastCueClock=bridge.LastCueClock;
    report.speechBodyWeight=bridge.avatar.SpeechBodyWeight;report.maxSpeechBodyWeight=Mathf.Max(report.maxSpeechBodyWeight,report.speechBodyWeight);report.gesture=bridge.avatar.ConversationGesture;
    var animator=bridge.avatar.animator;report.leftHand=animator.GetBoneTransform(HumanBodyBones.LeftHand).position;report.rightHand=animator.GetBoneTransform(HumanBodyBones.RightHand).position;
    report.screenHead=bridge.ui.view.WorldToViewportPoint(animator.GetBoneTransform(HumanBodyBones.Head).position);

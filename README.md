@@ -81,8 +81,15 @@ python -m unittest discover -s tests -v
   - `speaking`：真实音频开始后，双臂、手腕、胸、颈、头配合语音节拍和强弱动作；
   - `idle`：回到待机。
 - `AvatarConversation` 直接跟随真实播放时钟，短句从开始就有轻量手势，不再等待定时器。暂停、结束、取消或音频帧超时后平滑回到待机；动作模型播放全身动作时，自动手臂层让出控制。
-- LLM 可使用 `explain`、`open_palms`、`emphasis`、`nod`、`shake_head`、`head_tilt`、`lean_in`、`lean_left/right`、`sway`、`breathe` 表达讲解、疑问、同意等语义。手势就地执行，无需等待远端推理；没有语义动作时仍有语音驱动的轻量表演。语义是否贴合内容取决于 LLM 输出，默认节拍层不做语义推断。
+- LLM 在同一次回复中输出 `performance`：安慰、感谢、解释、打趣、惊讶、克制拒绝或倾听。持续情绪在会话内跨句保留、随时间衰减，并进入下一次回复的提示；规则降级避免把“没有生气”“别哭，我陪你”演成愤怒或哭泣。
+- 表情、眼神、语速、身体幅度共用这份计划。`gestures: []` 会关闭显著手势及自动手臂摆动，保留眨眼、呼吸和轻微姿势变化；安慰时使用关切的柔和表情，感谢时有短暂移开视线。
+- `explain`、`open_palms`、`emphasis`、`nod`、`shake_head`、`head_tilt`、`lean_in` 等交谈手势在 Unity 就地执行，有准备、表达和收回阶段。身体和头部可同时执行，动作不再拉伸到整句长度。完整模型动作继续使用现有 Windows／Ubuntu 服务。
 - 一句语音结束后，属于该句的延迟动作不会继续排队播放。点头、歪头和摇头可叠加到模型动作，不再为这些微动作中断全身播放。
-- 表情仍由 `perform` 的 emotion 和 `state` 的 emotion 驱动；口型继续走 `YachiyoFaceController.SetAudioMouth`，两者互不覆盖。
+- 表情和视线在音频实际开始时生效，句末回到较淡的当前情绪，而非立即清空。口型继续走 `YachiyoFaceController.SetAudioMouth`。
+- 直接输入新消息或点麦克风会取消旧回复、音频预取和旧动作。全程语音输入可勾选「允许语音插话（建议戴耳机）」；默认仍防回声，勾选后用浏览器回声消除后的持续语音能量触发打断。麦克风仍需手动开启。
+
+当前对齐使用合成音频的起音与真实播放时钟。文本锚点只有在具备最终日语文本的可靠词时间时才执行；本项目尚未部署强制对齐服务，不用字符数估算冒充词级同步。GPT-SoVITS 已接入 0.9–1.1 倍 `speed_factor`；保留原参考音频与其转写，不把情绪指令塞入 `prompt_text`，也不声称它支持独立音高控制。情绪语音的音色和听感仍需参考音频标定与真人试听。
+
+表演计划实机回归：`node director/tools/desktop/verify-performance.mjs`。实际页面插话回归：`node director/tools/desktop/verify-interruption.mjs`。两者使用固定回复/合成音频，结果保存在本机 `artifacts/performance-validation/`。
 
 短句动作与位置控件的实机回归：`node director/tools/desktop/verify-conversation.mjs`（先构建并安装统一应用）。

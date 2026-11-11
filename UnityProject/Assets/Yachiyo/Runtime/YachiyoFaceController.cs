@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 
 namespace Yachiyo {
- public enum FaceEmotion { Neutral, Happy, Surprised, Sad, Thinking, Angry }
+ public enum FaceEmotion { Neutral, Happy, Surprised, Sad, Thinking, Angry, Warm, ConcernedWarm, Shy, Playful, Serious }
 
  // Owns every facial blend-shape write. AvatarMotion must not write blink/smile
  // while this component is present; the controller blends emotions, blinking,
@@ -25,6 +25,11 @@ namespace Yachiyo {
 
   static readonly Dictionary<FaceEmotion,(string,float)[]> Presets=new Dictionary<FaceEmotion,(string,float)[]>{
    {FaceEmotion.Neutral,new (string,float)[0]},
+   {FaceEmotion.Warm,new[]{("_209_FC_mouth_smile",40f),("_301_FC_eyebrow_uresii",10f),("_301_EB_eyebrow_uresii",10f)}},
+   {FaceEmotion.ConcernedWarm,new[]{("_209_FC_mouth_smile",25f),("_302_FC_eyebrow_kanasii",24f),("_302_EB_eyebrow_kanasii",24f)}},
+   {FaceEmotion.Shy,new[]{("_209_FC_mouth_smile",60f),("_102_FC_eye_smile_left",25f),("_102_FC_eye_smile_right",25f),("_102_EL_eye_smile_left",25f),("_102_EL_eye_smile_right",25f)}},
+   {FaceEmotion.Playful,new[]{("_209_FC_mouth_smile",65f),("_301_FC_eyebrow_uresii",30f),("_301_EB_eyebrow_uresii",30f),("_102_FC_eye_smile_left",20f),("_102_EL_eye_smile_left",20f)}},
+   {FaceEmotion.Serious,new[]{("_304_FC_eyebrow_down",22f),("_304_EB_eyebrow_down",22f),("_104_FC_eye_kiri",12f),("_104_EL_eye_kiri",12f)}},
    {FaceEmotion.Happy,new[]{
     ("_209_FC_mouth_smile",75f),("_102_FC_eye_smile_left",55f),("_102_FC_eye_smile_right",55f),
     ("_102_EL_eye_smile_left",55f),("_102_EL_eye_smile_right",55f),("_301_FC_eyebrow_uresii",15f),("_301_EB_eyebrow_uresii",15f)}},
