@@ -31,7 +31,8 @@ try{
  const originalFetch=window.fetch, originalPlay=HTMLMediaElement.prototype.play;
  let chatRequests=0;result.requests=[];
  const voice='こんにちは。音声のテストです。',caption='你好，这是语音播放测试。';
- const lines=['BEAT: {"emotion":"happy","actions":[]}', 'VOICE: '+voice, 'CAPTION: '+caption, 'CONTROL: '+JSON.stringify({reply:voice,caption,emotion:'happy',actions:[],memory_writes:[]})];
+ const actions=[{type:'look_at_chat',duration:1.3},{type:'explain',side:'left',duration:1.8}];
+ const lines=['BEAT: '+JSON.stringify({emotion:'happy',actions}), 'VOICE: '+voice, 'CAPTION: '+caption, 'CONTROL: '+JSON.stringify({reply:voice,caption,emotion:'happy',actions,memory_writes:[]})];
  const packets=lines.map(content=>'data: '+JSON.stringify({choices:[{delta:{content:content+'\\n'}}]})+'\\n\\n').join('')+'data: [DONE]\\n\\n';
  const bytes=Uint8Array.from(atob('${fixture.toString('base64')}'),c=>c.charCodeAt(0));
  window.fetch=(url,options)=>{
@@ -83,6 +84,9 @@ try {
  assert(result.passed, result.error);
  const native = JSON.parse(fs.readFileSync(nativeReport + '.json', 'utf8'));
  assert(native.mouthFrames > 10 && native.maxVisemes.some(value => value > 1), 'real Unity mouth did not follow playback');
+ assert(native.maxSpeechBodyWeight > .9, 'actual installed page did not start the speech body layer');
+ assert(native.performances > 0 && native.gesture === 'explain', 'streaming BEAT did not reach the semantic body gesture');
+ assert.equal(native.speechBodyWeight, 0, 'speech body did not return to idle after stop');
  assert.equal(native.mouthOpen, 0); assert(native.currentVisemeMax < 1, 'mouth did not close after stop');
  // No local endpoint, voice paths, credentials or spoken audio in the report.
  fs.writeFileSync(path.join(output, live ? 'live-provider.json' : 'stream-fixture.json'), JSON.stringify({ ...result, native }, null, 2));

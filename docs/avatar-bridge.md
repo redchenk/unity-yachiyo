@@ -12,12 +12,16 @@ Every command carries sessionId, epoch, seq, commandId, turnId, utteranceId, kin
 | state | Idle/listening/thinking/speaking; no fake phonemes |
 | audio | Actual start, pause, end/cancel with an utterance identity |
 | mouth | Latest opening, silence, A/I/U/E/O and media clock; expires after 250 ms |
-| control | Visibility, camera lock/reset, Windows/Ubuntu backend and reconnect |
+| control | Visibility, camera lock/reset/x/y/zoom, Windows/Ubuntu backend and reconnect |
 | cancel | Clears queued actions, audio ownership and motion requests; advances epoch |
 
 A/I/U/E/O map to vrc.v_aa, vrc.v_ih, vrc.v_ou, vrc.v_e, vrc.v_oh. Unity bounds and normalizes weights. JawOpen is only a fallback when vowel evidence is absent. The face controller owns final blendshape writes, including eyebrow/eyeline synchronization and automatic blinking.
 
 The director retains audio playback; blob URLs never cross the bridge. Pause/waiting/seek closes the old identity; resume creates a new identity so backward seek is valid while stale frames are rejected. Reconnect requires fresh commands or playback.
+
+Speech audio start also owns the local conversational body layer. Mouth frames supply playback time and energy; a missing-frame timeout releases the layer. Automatic arms yield to full-body clips or explicit local body actions. Semantic explain/open_palms/emphasis and leaning/sway gestures run locally; nod/tilt/shake can overlay a generated clip. Utterance end removes its queued performances and delayed callbacks. Singing does not start speech gestures.
+
+Camera x/y are normalized viewport offsets in [-0.65, 0.65], positive right/up. Zoom is an exponential distance delta. Lock rejects position/zoom changes. Capabilities publish cameraX/Y/Distance/Yaw/Pitch and cameraLocked for the controls. Plain left drag pans, right or Shift-left drag rotates; framing is camera composition, leaving avatar roots and cloth simulation unchanged. PlayerPrefs saves position, zoom and orbit after a debounce; diagnostic runs do not write these preferences.
 
 Receipts: accepted, started, completed, cancelled, unsupported, failed. Model execution starts once a real clip reaches the avatar; local preview is explicit. Gaze targets eyes, and does not imply scene understanding, grasping or object interaction.
 

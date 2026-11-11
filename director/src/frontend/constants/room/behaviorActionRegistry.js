@@ -21,6 +21,10 @@ export const BEHAVIOR_ACTION_DEFINITIONS = [
     ['clap', '鼓掌', 'clap hands', ['clapping']],
     ['dance', '跳舞', 'dance gently in place', ['dancing']]
   ].map(([id, label, prompt, aliases]) => ({ id, label, prompt, aliases, defaultDurationMs: 3500, parameters: () => [] })),
+  ...[
+    ['explain', '举手讲解', 'a small open-hand gesture while explaining a point', ['talk_gesture']],
+    ['open_palms', '摊手', 'open both hands for a question or uncertainty', ['question', 'shrug']]
+  ].map(([id, label, prompt, aliases]) => ({ id, label, prompt, aliases, unityOnly: true, defaultDurationMs: 1800, parameters: () => [] })),
   {
     id: 'look_at_chat',
     label: 'Look at chat',
@@ -564,7 +568,7 @@ export function behaviorBodyActionButtons() {
 }
 
 export function behaviorActionComboPrompt() {
-  if (typeof window !== 'undefined' && window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity') return 'Use only the connected Unity capability action ids. Choose at most one full-body model action (wave/bow/turn/walk/clap/dance) per performance, plus facial or gaze actions. Happy: smile + nod; greeting: wave; attention: look_at_chat. Unsupported actions must not be requested.';
+  if (typeof window !== 'undefined' && window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity') return 'Use connected Unity action ids. Match speech meaning with small immediate gestures: explain/emphasis for a point, open_palms for questions, nod for agreement, shake_head for refusal, head_tilt/lean_in for curiosity, sway for playful replies. Vary hands using side left/right. These gestures run locally with speech. Reserve wave/bow/turn/walk/clap/dance for explicit full-body intentions; at most one per performance. Do not request a full-body motion on every sentence.';
   return 'happy: bounce + smile + nod + ear_wiggle; shy/smug: smirk + sway/head_tilt + lean_in; playful: tongue_out + smirk + ear_wiggle/hat_ear_wiggle; angry/fire: lean_in + emphasis/shake_head; sad: breathe + nod + sway; surprised: lean_in + bounce + blink + ear_perk. Vary the order and pick actions that match the emotion';
 }
 
@@ -573,6 +577,7 @@ export function semanticActionPromptCatalog() {
     'Semantic action ids for the actions array:',
     ...BEHAVIOR_ACTION_DEFINITIONS
       .filter((definition) => definition.prompt && definition.id !== 'reset')
+      .filter((definition) => !definition.unityOnly || (typeof window !== 'undefined' && window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity'))
       .filter((definition) => typeof window === 'undefined' || window.TSUKUYOMI_AVATAR_DRIVER?.mode !== 'unity' || (window.TSUKUYOMI_AVATAR_CAPABILITIES?.actions || ['wave','bow','nod','turn','smile','blink','look_at_chat']).includes(definition.id))
       .map((definition) => `- ${definition.id}: ${definition.prompt}`)
   ].join('\n');

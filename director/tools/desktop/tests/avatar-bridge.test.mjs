@@ -60,6 +60,35 @@ test('disconnect invalidates epoch, ignores stale receipts and never replays com
   assert(!receipts.some(r => r.state === 'completed'));
 });
 
+test('speech owns immediate audio motion and drops delayed gestures after a short utterance', async t => {
+  const { url, messages } = await fixture(t); let status;
+  const driver = createUnityAvatarDriver({ url: `${url}?role=director`, WebSocketClass: WebSocket, events: new EventTarget(), onStatus: s => status = s });
+  t.after(() => driver.dispose()); await until(() => status?.ready);
+  driver.state({ mode: 'speaking', emotion: 'happy' });
+  const audio = { currentTime: 0 };
+  driver.audioStart(audio);
+  driver.perform({ sequence: [{ delayMs: 180, behaviorActions: [{ type: 'explain' }] }] });
+  await until(() => messages.some(m => m.kind === 'audio'));
+  assert.equal(messages.find(m => m.kind === 'audio').payload.emotion, 'happy');
+  driver.audioEnd(audio); await delay(250);
+  assert(!messages.some(m => m.kind === 'perform'), 'ended speech must not trigger a stale gesture');
+  driver.audioStart({ currentTime: 0 }); await delay(2500);
+  assert(!messages.some(m => m.kind === 'perform'), 'automatic speech motion must not enqueue periodic full-body actions');
+});
+
+test('Unity semantic prompt advertises connected conversational gestures only', async () => {
+  const { semanticActionPromptCatalog, behaviorActionComboPrompt } = await import('../../../src/frontend/constants/room/behaviorActionRegistry.js');
+  const previous = globalThis.window;
+  try {
+    globalThis.window = { TSUKUYOMI_AVATAR_DRIVER: { mode: 'unity' }, TSUKUYOMI_AVATAR_CAPABILITIES: { actions: ['explain', 'open_palms', 'emphasis', 'nod'] } };
+    const catalog = semanticActionPromptCatalog();
+    for (const id of ['explain', 'open_palms', 'emphasis', 'nod']) assert(catalog.includes(`- ${id}:`));
+    assert(!catalog.includes('ear_wiggle')); assert(behaviorActionComboPrompt().includes('speech meaning'));
+    globalThis.window = {};
+    assert(!semanticActionPromptCatalog().includes('- explain:'));
+  } finally { if (previous === undefined) delete globalThis.window; else globalThis.window = previous; }
+});
+
 test('foreign origins and duplicate avatar owners cannot access local gateway', async t => {
   const { url } = await fixture(t);
   for (const [options, code] of [[{ origin: 'https://foreign.example' }, 403], [{}, 409]]) {

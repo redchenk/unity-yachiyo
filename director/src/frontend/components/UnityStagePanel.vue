@@ -2,12 +2,14 @@
 import { ref } from 'vue';
 const bodyMode=ref(localStorage.getItem('yachiyo:avatar:bodyMode') || 'model');
 const saveBodyMode=()=>localStorage.setItem('yachiyo:avatar:bodyMode',bodyMode.value);
-defineProps({ ready: Boolean, connection: String, receipt: Object, capabilities: Object, compact: Boolean });
+const props=defineProps({ ready: Boolean, connection: String, receipt: Object, capabilities: Object, compact: Boolean });
 const act = type => window.TSUKUYOMI_AVATAR_DRIVER?.perform({ emotion: 'happy', behaviorActions: [{ type }], durationMs: 3500 });
 const states={accepted:'已接收',started:'正在执行',completed:'已完成',cancelled:'已取消',unsupported:'暂不支持',failed:'执行失败'};
 const selectBackend = event => window.TSUKUYOMI_AVATAR_DRIVER?.control('backend',event.target.value);
 const reconnect = () => window.TSUKUYOMI_AVATAR_DRIVER?.control('reconnect',1);
 const stop = () => window.dispatchEvent(new CustomEvent('yachiyo:avatar-stop'));
+const control = (action,value=0) => window.TSUKUYOMI_AVATAR_DRIVER?.control(action,value);
+const move = (axis,amount) => control('camera_'+axis,Math.max(-.65,Math.min(.65,Number(props.capabilities?.[axis==='x'?'cameraX':'cameraY']||0)+amount)));
 </script>
 
 <template>
@@ -26,8 +28,22 @@ const stop = () => window.dispatchEvent(new CustomEvent('yachiyo:avatar-stop'));
       <button :disabled="!ready" @click="act('wave')">挥手</button>
       <button :disabled="!ready" @click="act('nod')">点头</button>
       <button :disabled="!ready" @click="act('bow')">鞠躬</button>
+      <button :disabled="!ready" @click="act('explain')">讲解手势</button>
+      <button :disabled="!ready" @click="act('open_palms')">摊手</button>
       <button :disabled="!ready" @click="stop">停止动作与音频</button>
     </div>
+    <fieldset class="unity-framing" :disabled="!ready || capabilities?.cameraLocked">
+      <legend>角色位置与大小{{ capabilities?.cameraLocked ? ' · 已锁定' : '' }}</legend>
+      <p class="unity-camera-help">拖动角色移动位置 · 右键或 Shift 拖动旋转 · 滚轮缩放</p>
+      <label>左右 <input aria-label="角色左右位置" type="range" min="-65" max="65" step="1" :value="Math.round((capabilities?.cameraX || 0)*100)" @input="control('camera_x',Number($event.target.value)/100)"></label>
+      <label>上下 <input aria-label="角色上下位置" type="range" min="-65" max="65" step="1" :value="Math.round((capabilities?.cameraY || 0)*100)" @input="control('camera_y',Number($event.target.value)/100)"></label>
+      <div class="unity-position-buttons">
+        <button aria-label="角色向左移动" @click="move('x',-.04)">←</button><button aria-label="角色向右移动" @click="move('x',.04)">→</button>
+        <button aria-label="角色向上移动" @click="move('y',.04)">↑</button><button aria-label="角色向下移动" @click="move('y',-.04)">↓</button>
+        <button @click="control('camera_zoom',.12)">放大</button><button @click="control('camera_zoom',-.12)">缩小</button>
+        <button @click="control('camera_reset')">复位</button>
+      </div>
+    </fieldset>
     <p v-if="receipt" class="unity-receipt">执行回执：{{ states[receipt.state] || receipt.state }}{{ receipt.reason ? ' · ' + receipt.reason : '' }}</p>
     <small v-if="capabilities">已绑定 {{ capabilities.shapeCount }} 个表情通道 · A / I / U / E / O 音频口型</small>
   </aside>
@@ -41,5 +57,6 @@ const stop = () => window.dispatchEvent(new CustomEvent('yachiyo:avatar-stop'));
 .unity-stage-panel.compact{position:static;padding:8px;margin:0 0 12px;max-width:none;border-radius:10px;box-shadow:none}
 .unity-stage-panel.compact h2,.unity-stage-panel.compact p:not(.unity-receipt),.unity-stage-panel.compact small{display:none}
 .unity-stage-panel.compact .unity-stage-buttons{margin:10px 0;gap:5px}.unity-stage-panel.compact .unity-stage-buttons button{padding:6px 9px;font-size:11px}.unity-stage-panel.compact .unity-receipt{font-size:11px;margin:4px 0}
+.unity-framing{border:1px solid #d7dfda;border-radius:10px;margin:12px 0 0;padding:10px;font-size:12px}.unity-framing label{display:flex;gap:10px;align-items:center;margin:8px 0}.unity-framing input{flex:1;min-width:0;accent-color:#a64d75}.unity-position-buttons{display:flex;gap:5px;flex-wrap:wrap}.unity-position-buttons button{border:1px solid #d7ccd5;border-radius:7px;background:#fff8fc;color:#674c62;padding:6px 9px;cursor:pointer}.unity-framing:disabled{opacity:.5}.unity-stage-panel.compact p.unity-camera-help{display:block;font-size:11px;line-height:1.6;margin:0;color:#786d7b}
 @media(max-width:1000px){.unity-stage-panel{padding:20px;left:3%;right:3%;top:20%}}
 </style>

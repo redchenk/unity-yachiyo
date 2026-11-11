@@ -681,6 +681,16 @@ export function analyzeLive2DSentenceEmotion(text, fallbackEmotion = 'neutral') 
 }
 
 function sentenceActionsForEmotion(emotion) {
+  if (typeof window !== 'undefined' && window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity') {
+    const mood = normalizeEmotion(emotion);
+    const type = ['happy', 'smile', 'closed_smile'].includes(mood) ? 'explain'
+      : mood === 'surprised' ? 'open_palms'
+      : ['angry', 'fire'].includes(mood) ? 'emphasis'
+      : ['smug', 'shy', 'tongue'].includes(mood) ? 'head_tilt'
+      : ['sad', 'crying', 'watery_eyes', 'tear_drop'].includes(mood) ? 'nod' : 'breathe';
+    const supported = window.TSUKUYOMI_AVATAR_CAPABILITIES?.actions || ['look_at_chat', 'nod'];
+    return [{ type: 'look_at_chat', duration: 1.1 }, { type, duration: 1.3, delay: .1 }].filter(action => supported.includes(action.type));
+  }
   const actions = SENTENCE_ACTIONS_BY_EMOTION[normalizeEmotion(emotion)] || SENTENCE_ACTIONS_BY_EMOTION.neutral;
   return actions.map((action) => ({ ...action }));
 }
@@ -1374,7 +1384,9 @@ export function live2DStreamingControlSystemPrompt() {
     'VOICE contains only Japanese dialogue. CAPTION contains only matching Simplified Chinese dialogue. Use exactly the same viewer display names in both.',
     'Do not output tiny filler-only VOICE chunks. Do not quote a viewer message verbatim; respond to its meaning.',
     'Never put JSON, stage directions, parentheses, asterisk actions, pose descriptions, or action labels in VOICE or CAPTION.',
-    'Use 1-3 concise semantic actions per BEAT from: look_at_chat, smile, nod, head_tilt, sway, breathe, bounce, lean_in, wave, wink, smirk, surprised.',
+    typeof window !== 'undefined' && window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity'
+      ? `Use 1-3 concise semantic actions per BEAT from the connected Unity catalog below. ${behaviorActionComboPrompt()}\n${semanticActionPromptCatalog()}`
+      : 'Use 1-3 concise semantic actions per BEAT from: look_at_chat, smile, nod, head_tilt, sway, breathe, bounce, lean_in, wave, wink, smirk, surprised.',
     'CONTROL reply and caption must exactly concatenate the emitted VOICE and CAPTION lines. Include every actually addressed 1-based audience index in acknowledgedIndexes, especially every gift, superchat, or guard purchase.',
     'For any explicit song request, including 点歌, 我要听, 想听, 听一首, 来一首, 唱一首, or 放一首, set music to {"action":"request","query":"song title artist"}; FIFO requests must not interrupt the current track. Use play_next only when explicitly requested.',
     'If NetEase/网易云/163/云音乐 is named, add "provider":"netease-cloud". Never include a URL, token, cookie, or credential.',

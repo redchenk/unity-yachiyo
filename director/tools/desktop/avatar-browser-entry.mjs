@@ -4,5 +4,5 @@ import { saveLipsyncSettings } from '../../src/frontend/services/room/lipsyncSet
 import { dispatchRoomLive2D } from '../../src/frontend/services/room/live2dControl.js';
 import { createRvcSongPlayer } from '../../src/frontend/services/room/rvcSongPlayer.js';
 import { buildVocalTimeline } from '../../src/frontend/services/room/rvcVocalTimeline.js';
-import { parseLive2DControlPayload } from '../../src/frontend/services/room/live2dLlmControl.js';
-window.__avatarTools = { createLive2DSpeechPlayer, saveLipsyncSettings, dispatchRoomLive2D, createRvcSongPlayer, buildVocalTimeline, parseLive2DControlPayload };
+import { parseLive2DControlPayload, live2DStreamingControlSystemPrompt } from '../../src/frontend/services/room/live2dLlmControl.js';
+window.__avatarTools = { createLive2DSpeechPlayer, saveLipsyncSettings, dispatchRoomLive2D, createRvcSongPlayer, buildVocalTimeline, parseLive2DControlPayload, live2DStreamingControlSystemPrompt };

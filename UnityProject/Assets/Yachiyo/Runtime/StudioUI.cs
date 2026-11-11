@@ -21,12 +21,18 @@ namespace Yachiyo {
   public float LastGenerationSeconds {get;private set;}
   float yaw=0, pitch=8, distance=3.4f;
   Vector3 cameraOffset=new Vector3(0,.85f,0),previousPointer;
+  Vector2 framing;float cameraSaveAt;bool cameraDirty;
+  public Vector2 DirectorFraming=>framing;
+  public float DirectorCameraDistance=>distance;
+  public float DirectorCameraYaw=>yaw;
+  public float DirectorCameraPitch=>pitch;
+  public int CameraRevision {get;private set;}
   int cameraDragButton=-1;
   bool cameraPan,traceCamera,cameraFocusRequested,textFieldFocused;
   Font font;GUIStyle label,title,small,button,input;
   Color ink=new Color(.86f,.9f,.93f),muted=new Color(.47f,.56f,.63f),accent=new Color(.45f,.88f,.76f);
   string[] localIds={"wave","bow","nod","turn"};string[] localNames={"挥手","鞠躬","点头","转一圈"};
-  void Start(){clothing=avatar.GetComponent<GarmentPhysics>();face=avatar.GetComponent<YachiyoFaceController>()??avatar.gameObject.AddComponent<YachiyoFaceController>();face.avatar=avatar;var director=gameObject.AddComponent<DirectorBridge>();director.ui=this;director.avatar=avatar;director.face=face;if(UnifiedDirectorHost.IsBundled)gameObject.AddComponent<UnifiedDirectorHost>();font=Resources.Load<Font>("NotoSansCJKsc-Regular");var args=Environment.GetCommandLineArgs();traceCamera=Array.IndexOf(args,"--trace-camera-input")>=0;InitializeServiceProfiles(args);StartCoroutine(AutoCapture());StartCoroutine(VerifyRemote(args));StartCoroutine(ClothVerification.Run(this,avatar,clothing,args));StartCoroutine(FaceVerification.Run(avatar,args));StartCoroutine(StreamVerification.Run(this,avatar,args));StartCoroutine(BackendVerification.Run(this,avatar,args));StartCoroutine(VerifyAll(args));}
+  void Start(){clothing=avatar.GetComponent<GarmentPhysics>();if(!avatar.GetComponent<HairPhysics>())avatar.gameObject.AddComponent<HairPhysics>();face=avatar.GetComponent<YachiyoFaceController>()??avatar.gameObject.AddComponent<YachiyoFaceController>();face.avatar=avatar;var director=gameObject.AddComponent<DirectorBridge>();director.ui=this;director.avatar=avatar;director.face=face;if(UnifiedDirectorHost.IsBundled)gameObject.AddComponent<UnifiedDirectorHost>();font=Resources.Load<Font>("NotoSansCJKsc-Regular");LoadCamera();var args=Environment.GetCommandLineArgs();traceCamera=Array.IndexOf(args,"--trace-camera-input")>=0;InitializeServiceProfiles(args);StartCoroutine(AutoCapture());StartCoroutine(VerifyRemote(args));StartCoroutine(ClothVerification.Run(this,avatar,clothing,args));StartCoroutine(FaceVerification.Run(avatar,args));StartCoroutine(StreamVerification.Run(this,avatar,args));StartCoroutine(BackendVerification.Run(this,avatar,args));StartCoroutine(VerifyAll(args));}
   IEnumerator VerifyAll(string[] args){
    int p=Array.IndexOf(args,"--verify-all");if(p<0||p+1>=args.Length)yield break;string prefix=args[p+1];yield return null;
    yield return ClothVerification.Run(this,avatar,clothing,new[]{"--verify-cloth",prefix+"-cloth"});
@@ -47,6 +53,7 @@ namespace Yachiyo {
   IEnumerator AutoCapture(){var args=Environment.GetCommandLineArgs();int i=Array.IndexOf(args,"--capture");if(i>=0&&i+1<args.Length){yield return new WaitForSeconds(2);ScreenCapture.CaptureScreenshot(args[i+1]);}}
   void Update(){
    UpdateCameraInput();
+   if(cameraDirty&&Time.unscaledTime>cameraSaveAt)SaveCamera();
    if(Input.GetKeyDown(KeyCode.Escape))StopMotion();
    if(UnifiedDirectorHost.IsBundled)return;
    for(int i=0;i<4;i++)if(Input.GetKeyDown(KeyCode.F1+i)){StopMotion();avatar.Act(localIds[i],localNames[i]);status="正在"+localNames[i]+"。";}
@@ -66,6 +73,8 @@ namespace Yachiyo {
    var target=new Vector3(hips.position.x,0,hips.position.z)+cameraOffset;
    view.transform.position=target+Quaternion.Euler(-pitch,yaw,0)*new Vector3(0,0,distance);
    view.transform.LookAt(target);view.rect=UnifiedDirectorHost.IsBundled?UnifiedDirectorHost.StageViewport:new Rect(.34f,.085f,.66f,.81f);
+   float height=2*distance*Mathf.Tan(view.fieldOfView*Mathf.Deg2Rad*.5f);
+   view.transform.position-=view.transform.right*(framing.x*height*view.aspect)+view.transform.up*(framing.y*height);
   }
   Rect CameraPanel(float w){return new Rect(w-370,174,342,418);}
   bool InCameraArea(Vector3 pointer){
@@ -81,16 +90,16 @@ namespace Yachiyo {
    if(UnifiedDirectorHost.IsBundled){
     var input=UnifiedDirectorHost.ConsumeCameraInput();if(DirectorCameraLocked)return;
     float dx=input[0]*UnifiedDirectorHost.PixelScale,dy=input[1]*UnifiedDirectorHost.PixelScale;
-    if(input[3]>.5f){float step=2*distance*Mathf.Tan(view.fieldOfView*Mathf.Deg2Rad*.5f)/Mathf.Max(view.pixelHeight,1);cameraOffset+=(-view.transform.right*dx+view.transform.up*dy)*step;}
+    if(input[3]>.5f){framing+=new Vector2(dx/Mathf.Max(view.pixelWidth,1),-dy/Mathf.Max(view.pixelHeight,1));ClampFraming();}
     else{float sensitivity=180f/Mathf.Max(view.pixelHeight,1);yaw=Mathf.Repeat(yaw-dx*sensitivity+180,360)-180;pitch=Mathf.Clamp(pitch+dy*sensitivity,-80,80);}
-    distance=Mathf.Clamp(distance*Mathf.Exp(-input[2]*.03f),.35f,8);return;
+    distance=Mathf.Clamp(distance*Mathf.Exp(-input[2]*.03f),.35f,8);if(Mathf.Abs(dx)+Mathf.Abs(dy)+Mathf.Abs(input[2])>.001f)CameraChanged();return;
    }
    if(DirectorCameraLocked){cameraDragButton=-1;return;}
    var pointer=Input.mousePosition;bool overView=InCameraArea(pointer);
    if(traceCamera)for(int i=0;i<3;i++)if(Input.GetMouseButtonDown(i)||Input.GetMouseButtonUp(i))Debug.Log("CAMERA_POINTER button="+i+" down="+Input.GetMouseButtonDown(i)+" position="+pointer+" overView="+overView+" yaw="+yaw+" pitch="+pitch+" offset="+cameraOffset+" distance="+distance);
    if(cameraDragButton<0&&overView){
     for(int i=0;i<3;i++)if(Input.GetMouseButtonDown(i)){
-     cameraDragButton=i;cameraPan=i==2||Input.GetKey(KeyCode.LeftShift)||Input.GetKey(KeyCode.RightShift);
+     cameraDragButton=i;cameraPan=i==2||(i==0&&!Input.GetKey(KeyCode.LeftShift)&&!Input.GetKey(KeyCode.RightShift));
      previousPointer=pointer;break;
     }
    }
@@ -100,12 +109,13 @@ namespace Yachiyo {
      var delta=pointer-previousPointer;
      if(cameraPan){
       // Pan at the focus depth so the scene follows the pointer at any zoom level.
-      cameraOffset+=view.ScreenToWorldPoint(new Vector3(previousPointer.x,previousPointer.y,distance))-view.ScreenToWorldPoint(new Vector3(pointer.x,pointer.y,distance));
+      framing+=new Vector2(delta.x/Mathf.Max(view.pixelWidth,1),delta.y/Mathf.Max(view.pixelHeight,1));ClampFraming();
      }else{float sensitivity=180f/Mathf.Max(view.pixelHeight,1);yaw=Mathf.Repeat(yaw-delta.x*sensitivity+180,360)-180;pitch=Mathf.Clamp(pitch-delta.y*sensitivity,-80,80);}
+     if(delta.sqrMagnitude>.001f)CameraChanged();
      previousPointer=pointer;
     }
    }
-   if(overView)distance=Mathf.Clamp(distance*Mathf.Exp(-Input.mouseScrollDelta.y*.08f),.35f,8);
+   if(overView&&Mathf.Abs(Input.mouseScrollDelta.y)>.001f){distance=Mathf.Clamp(distance*Mathf.Exp(-Input.mouseScrollDelta.y*.08f),.35f,8);CameraChanged();}
    if(cameraSettings&&!textFieldFocused){
     if(Input.GetKeyDown(KeyCode.Alpha1))SetCameraPreset(0);
     if(Input.GetKeyDown(KeyCode.Alpha2))SetCameraPreset(1);
@@ -120,7 +130,7 @@ namespace Yachiyo {
    }
   }
   void SetCameraPreset(int preset){
-   cameraDragButton=-1;yaw=0;
+   cameraDragButton=-1;yaw=0;framing=Vector2.zero;CameraChanged();
    var head=avatar.animator.GetBoneTransform(HumanBodyBones.Head);
    if(preset==1){pitch=3;distance=1.8f;cameraOffset=new Vector3(0,head.position.y-.16f,0);}
    else if(preset==2){pitch=0;distance=.72f;cameraOffset=new Vector3(0,head.position.y+.065f,0);}
@@ -188,6 +198,20 @@ namespace Yachiyo {
    Text(x+16,y,160,23,name,small);Text(x+240,y,86,23,formatted,small);
    return GUI.HorizontalSlider(new Rect(x+16,y+28,310,20),value,min,max);
   }
+  void ClampFraming(){framing.x=Mathf.Clamp(framing.x,-.65f,.65f);framing.y=Mathf.Clamp(framing.y,-.65f,.65f);}
+  void CameraChanged(){CameraRevision++;cameraDirty=true;cameraSaveAt=Time.unscaledTime+.4f;}
+  void LoadCamera(){
+   framing=new Vector2(PlayerPrefs.GetFloat("yachiyo.camera.x",0),PlayerPrefs.GetFloat("yachiyo.camera.y",0));ClampFraming();
+   yaw=PlayerPrefs.GetFloat("yachiyo.camera.yaw",0);pitch=Mathf.Clamp(PlayerPrefs.GetFloat("yachiyo.camera.pitch",8),-80,80);distance=Mathf.Clamp(PlayerPrefs.GetFloat("yachiyo.camera.distance",3.4f),.35f,8);
+  }
+  void SaveCamera(){
+   // Verification profiles never write the user's framing preferences.
+   if(Array.IndexOf(Environment.GetCommandLineArgs(),"--verify-director")>=0){cameraDirty=false;return;}
+   PlayerPrefs.SetFloat("yachiyo.camera.x",framing.x);PlayerPrefs.SetFloat("yachiyo.camera.y",framing.y);PlayerPrefs.SetFloat("yachiyo.camera.yaw",yaw);PlayerPrefs.SetFloat("yachiyo.camera.pitch",pitch);PlayerPrefs.SetFloat("yachiyo.camera.distance",distance);PlayerPrefs.Save();cameraDirty=false;
+  }
+  void OnApplicationQuit(){if(cameraDirty)SaveCamera();}
+  public void SetDirectorFraming(float x,float y){if(DirectorCameraLocked||float.IsNaN(x)||float.IsNaN(y)||float.IsInfinity(x)||float.IsInfinity(y))return;framing=new Vector2(x,y);ClampFraming();CameraChanged();}
+  public void ZoomDirectorCamera(float change){if(DirectorCameraLocked||float.IsNaN(change)||float.IsInfinity(change))return;distance=Mathf.Clamp(distance*Mathf.Exp(-Mathf.Clamp(change,-.5f,.5f)),.35f,8);CameraChanged();}
   public bool DirectorCameraLocked {get;set;}
   public void ResetDirectorCamera()=>SetCameraPreset(0);
   public void ReconnectDirectorService()=>StartCoroutine(ConnectSelectedService());

@@ -19,3 +19,14 @@
 - Regression coverage includes WAV header completion with padded metadata, truncated/empty audio, unchanged MP3 bytes, single-use URL consumption, aborting downloads and playing the next line after cancellation. The native diagnostic bridge also rejects non-JSON numbers instead of throwing during verification.
 
 Detailed runtime reports and screenshots stay in local artifacts/ and are not published with character assets or private settings.
+
+## Conversational gestures and framing — 2026-11-11
+
+- Unity build, frontend build and deep/strict Mac app signature verification passed. Director tests: 37 passed, 1 skipped (external NSIS fixture).
+- A 1.3-second synthetic utterance played through actual WKWebView audio and moved a rendered Unity hand by 11.7 cm from the idle sample. The body layer reached full weight during the short sentence, then returned to zero after playback and explicit stop. This measures bone response, not subjective naturalness or a live LLM's semantic choices.
+- Parsed explanation and open-palms actions produced native gestures and completed receipts. The streaming prompt advertises connected Unity gestures; Live2D-only emotion fallback actions are replaced with supported conversational actions.
+- The installed page's Start Live path consumed a streaming BEAT containing an explanation gesture, played the full five-second zero-length-header WAV fixture, drove 285 mouth frames and the speech body layer, and closed both after stop. No replacement speech player was injected in this check.
+- Native viewport tests passed for right/up buttons, the position slider, lock rejection, reset and zoom. Actual mouse dragging moved the avatar right/up, and left/down buttons moved it back with matching slider values. A normal quit/relaunch visibly restored the saved x/y offsets; reset then returned the avatar to center. Explanation and two-arm gesture previews were visually inspected in the installed application.
+- Existing unified audio regression passed for five visemes, singing pause/resume/seek/silence, cancellation and owned-service shutdown. No new paid LLM calls or audience messages were sent; Windows/Ubuntu motion generation was not changed by this update.
+
+Reproduce native conversation/framing coverage with `node director/tools/desktop/verify-conversation.mjs`; installed-page streaming coverage uses `node director/tools/desktop/verify-tts.mjs`. Both require the local licensed model and a built Mac application, and keep reports under ignored `artifacts/`.

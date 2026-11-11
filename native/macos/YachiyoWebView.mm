@@ -81,14 +81,14 @@ extern "C" void YachiyoWeb_Open(const char *address) {
   if(verificationEnabled)[config.userContentController addScriptMessageHandler:navigation name:@"yachiyoVerification"];
   directorView.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
   [window.contentView addSubview:directorView positioned:NSWindowAbove relativeTo:nil];layout();
-  inputMonitor=[NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDown|NSEventMaskLeftMouseUp|NSEventMaskLeftMouseDragged|NSEventMaskOtherMouseDown|NSEventMaskOtherMouseUp|NSEventMaskOtherMouseDragged|NSEventMaskScrollWheel) handler:^NSEvent *(NSEvent *event){
+  inputMonitor=[NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDown|NSEventMaskLeftMouseUp|NSEventMaskLeftMouseDragged|NSEventMaskRightMouseDown|NSEventMaskRightMouseUp|NSEventMaskRightMouseDragged|NSEventMaskOtherMouseDown|NSEventMaskOtherMouseUp|NSEventMaskOtherMouseDragged|NSEventMaskScrollWheel) handler:^NSEvent *(NSEvent *event){
    if(event.window!=directorView.window)return event;
    NSPoint point=[directorView convertPoint:event.locationInWindow fromView:nil];bool inside=NSPointInRect(point,directorView.avatarHole);
    std::lock_guard<std::mutex> guard(resultMutex);
-   if(event.type==NSEventTypeLeftMouseDown||event.type==NSEventTypeOtherMouseDown){cameraDragging=inside;cameraPrevious=point;cameraPan=event.type==NSEventTypeOtherMouseDown||(event.modifierFlags&NSEventModifierFlagShift);}
-   if(cameraDragging&&(event.type==NSEventTypeLeftMouseDragged||event.type==NSEventTypeOtherMouseDragged||event.type==NSEventTypeLeftMouseUp||event.type==NSEventTypeOtherMouseUp)){cameraDx+=point.x-cameraPrevious.x;cameraDy+=(directorView.isFlipped?1:-1)*(point.y-cameraPrevious.y);cameraPrevious=point;}
-   if((event.type==NSEventTypeLeftMouseDragged||event.type==NSEventTypeOtherMouseDragged)&&cameraDragging)return nil;
-   if(event.type==NSEventTypeLeftMouseUp||event.type==NSEventTypeOtherMouseUp){bool consume=cameraDragging;cameraDragging=false;if(consume)return nil;}
+   if(event.type==NSEventTypeLeftMouseDown||event.type==NSEventTypeRightMouseDown||event.type==NSEventTypeOtherMouseDown){cameraDragging=inside;cameraPrevious=point;cameraPan=event.type==NSEventTypeOtherMouseDown||(event.type==NSEventTypeLeftMouseDown&&!(event.modifierFlags&NSEventModifierFlagShift));}
+   if(cameraDragging&&(event.type==NSEventTypeLeftMouseDragged||event.type==NSEventTypeRightMouseDragged||event.type==NSEventTypeOtherMouseDragged||event.type==NSEventTypeLeftMouseUp||event.type==NSEventTypeRightMouseUp||event.type==NSEventTypeOtherMouseUp)){cameraDx+=point.x-cameraPrevious.x;cameraDy+=(directorView.isFlipped?1:-1)*(point.y-cameraPrevious.y);cameraPrevious=point;}
+   if((event.type==NSEventTypeLeftMouseDragged||event.type==NSEventTypeRightMouseDragged||event.type==NSEventTypeOtherMouseDragged)&&cameraDragging)return nil;
+   if(event.type==NSEventTypeLeftMouseUp||event.type==NSEventTypeRightMouseUp||event.type==NSEventTypeOtherMouseUp){bool consume=cameraDragging;cameraDragging=false;if(consume)return nil;}
    if(event.type==NSEventTypeScrollWheel&&inside){cameraZoom+=event.scrollingDeltaY;return nil;}
    return inside?nil:event;
   }];

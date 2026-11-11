@@ -15,7 +15,7 @@
 - 身体动作默认走现有模型服务；「角色」页可以明确选择本地预览。挥手、鞠躬、转身、走路、鼓掌、跳舞可请求模型；点头、轻微摇头、歪头是本地微动作。
 - 回执包括 accepted / started / completed / cancelled / unsupported / failed。模型失败会显示失败，不会悄悄改播预览。
 - session、epoch、commandId、seq 和 utteranceId 隔离过期命令。取消、切换服务、断线重连不补播旧动作。
-- 隐藏、锁定、重置作用于真实 3D 场景。角色区域可拖动旋转、Shift + 拖动平移、滚轮缩放。
+- 隐藏、锁定、重置作用于真实 3D 场景。角色区域普通拖动移动位置，右键或 Shift + 拖动旋转，滚轮缩放。「角色」页也提供上下左右按钮、滑杆和缩放；构图位置与视角自动保存。
 - Windows／Ubuntu 选择位于右侧「角色」页，沿用现有 SSH 隧道与服务配置。
 - 本次保留现有肩袖、布料、面部光照与角色资产，没有重新修改服装结构。
 
@@ -65,3 +65,24 @@ python -m unittest discover -s tests -v
 测试音频是可复现的合成元音，不调用收费 LLM／TTS，也不发送真实弹幕；这不等同于真人声音听感验收。Unity 运行检查需要本机已导入角色并完成构建。产物保存在不入库的 `artifacts/`。
 
 协议与生命周期见 [docs/avatar-bridge.md](docs/avatar-bridge.md)，第三方来源见 [THIRD_PARTY.md](THIRD_PARTY.md)。
+
+## 本地动作与头发
+
+- 本地动作执行器改成带淡入淡出的多关节表演：挥手会带动肩、上臂、前臂、手腕、胸、颈、头和髋部重心；鞠躬、点头、歪头、摇头、转身也分别有躯干/颈部分担，不再是单根骨骼的固定角度。动作结束自动回待机。
+- 新增 `HairPhysics`：自动识别原模型的 `Acs_Twintail_*`、`Acs_SideHair_*`、`Acs_FrontHair_*` 链（当前 10 条链 / 32 根骨骼），用头部角速度做弹簧-阻尼滞后，并带轻微自然摆动；不接管身体动作，也不改头发网格。
+- 导演台动作的提交/取消/完成仍走 `DirectorBridge`：`perform` → `avatar.Act`（本地）或 `ui.RequestMotion`（动作服务）；取消走 `CancelPerformances` / `avatar.Act("idle")`；完成由 `Execute` 的持续时间和 `Receipt("completed")` 返回。Unity 端每帧执行，不存在批处理式迟到。
+- 动作服务（DiP/远端）返回的动作仍取决于服务本身；本地动作现在用于「角色 → 本地动作预览」和不需要远端服务的微动作。
+
+## 对话时的角色表演
+
+- 导演台的 `tsukuyomi:live2d-character-state` 现在会通过 Unity driver 的 `state` 消息送到 `DirectorBridge`，再交给 `AvatarMotion.SetCharacterState`：
+  - `thinking`：轻微歪头、抬视线、思考表情；
+  - `listening`：面向观众、轻微点头和呼吸；
+  - `speaking`：真实音频开始后，双臂、手腕、胸、颈、头配合语音节拍和强弱动作；
+  - `idle`：回到待机。
+- `AvatarConversation` 直接跟随真实播放时钟，短句从开始就有轻量手势，不再等待定时器。暂停、结束、取消或音频帧超时后平滑回到待机；动作模型播放全身动作时，自动手臂层让出控制。
+- LLM 可使用 `explain`、`open_palms`、`emphasis`、`nod`、`shake_head`、`head_tilt`、`lean_in`、`lean_left/right`、`sway`、`breathe` 表达讲解、疑问、同意等语义。手势就地执行，无需等待远端推理；没有语义动作时仍有语音驱动的轻量表演。语义是否贴合内容取决于 LLM 输出，默认节拍层不做语义推断。
+- 一句语音结束后，属于该句的延迟动作不会继续排队播放。点头、歪头和摇头可叠加到模型动作，不再为这些微动作中断全身播放。
+- 表情仍由 `perform` 的 emotion 和 `state` 的 emotion 驱动；口型继续走 `YachiyoFaceController.SetAudioMouth`，两者互不覆盖。
+
+短句动作与位置控件的实机回归：`node director/tools/desktop/verify-conversation.mjs`（先构建并安装统一应用）。

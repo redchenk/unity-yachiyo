@@ -24,11 +24,11 @@ namespace Yachiyo {
   readonly Queue<Message> performances=new Queue<Message>();
   readonly HashSet<string> seen=new HashSet<string>();
   readonly Dictionary<Renderer,bool> hiddenRenderers=new Dictionary<Renderer,bool>();
-  readonly string[] actions={"wave","bow","nod","turn","head_tilt","shake_head","blink","smile","smirk","look_at_chat","look_away","walk","clap","dance"};
+  readonly string[] actions={"wave","bow","nod","turn","head_tilt","shake_head","blink","smile","smirk","look_at_chat","look_away","walk","clap","dance","explain","open_palms","emphasis","lean_in","lean_left","lean_right","sway","breathe"};
   CancellationTokenSource lifetime;Task network;volatile bool transportConnected;bool wasConnected;
   string session="",utterance="";int epoch=-1,generation;long lastSeq;int mouthClock=-1;
   Message active;Coroutine execution;float emotionUntil,gazeUntil;Transform gaze;
-  bool showSettings;string editEndpoint;Font font;
+  bool showSettings;string editEndpoint;Font font;int cameraRevision=-1;float nextCameraStatus;
   [Serializable]public class Message {
    public string type,kind,sessionId,commandId,turnId,utteranceId,state,reason;public int epoch;public long seq;public Payload payload;
   }
@@ -37,7 +37,7 @@ namespace Yachiyo {
   }
   [Serializable]public class Behavior {public string type,side,target;public float durationMs,delayMs,intensity;}
   [Serializable]class Ready {public string type="ready";public Capabilities capabilities;}
-  [Serializable]class Capabilities {public string protocol="yachiyo-avatar/1";public bool humanoid,audioVisemes,serviceConnected;public int shapeCount;public string selectedBackend;public string[] actions,emotions;public string motionBackend="model: wave/bow/turn/walk/clap/dance via existing Windows/Ubuntu service; local: explicit preview; nod/tilt/shake are local micro-gestures";}
+  [Serializable]class Capabilities {public string protocol="yachiyo-avatar/1";public bool humanoid,audioVisemes,serviceConnected;public int shapeCount;public string selectedBackend;public float cameraX,cameraY,cameraDistance,cameraYaw,cameraPitch;public bool cameraLocked;public string[] actions,emotions;public string motionBackend="model: wave/bow/turn/walk/clap/dance via existing Windows/Ubuntu service; local: explicit preview; nod/tilt/shake are local micro-gestures";}
 
   void Start(){
    font=Resources.Load<Font>("NotoSansCJKsc-Regular");
@@ -92,6 +92,7 @@ namespace Yachiyo {
    for(int n=0;n<160&&incoming.TryDequeue(out var text);n++){
     try{var msg=JsonUtility.FromJson<Message>(text);if(msg.type=="ping"){Send(new Message{type="ping"});SendReady();continue;}Handle(msg);}catch(Exception e){Debug.LogWarning("DIRECTOR_FRAME_REJECTED "+e.GetType().Name);}
    }
+   if(transportConnected&&ui.CameraRevision!=cameraRevision&&Time.unscaledTime>nextCameraStatus){cameraRevision=ui.CameraRevision;nextCameraStatus=Time.unscaledTime+.12f;SendReady();}
    if(emotionUntil>0&&Time.unscaledTime>emotionUntil){face.SetEmotion(FaceEmotion.Neutral);emotionUntil=0;}
    if(gazeUntil>0&&Time.unscaledTime>gazeUntil){face.SetLookTarget(null);gazeUntil=0;}
    if(execution==null&&performances.Count>0){active=performances.Dequeue();execution=StartCoroutine(Execute(active,generation));}
@@ -112,6 +113,9 @@ namespace Yachiyo {
      }
      if(p.action=="camera_lock")ui.DirectorCameraLocked=p.value>.5f;
      if(p.action=="camera_reset")ui.ResetDirectorCamera();
+     if(p.action=="camera_x")ui.SetDirectorFraming(p.value,ui.DirectorFraming.y);
+     if(p.action=="camera_y")ui.SetDirectorFraming(ui.DirectorFraming.x,p.value);
+     if(p.action=="camera_zoom")ui.ZoomDirectorCamera(p.value);
      if(p.action=="backend"&&(p.text=="windows"||p.text=="ubuntu"))ui.SelectBackend(p.text);
      if(p.action=="reconnect")ui.ReconnectDirectorService();
      SendReady();
@@ -128,16 +132,17 @@ namespace Yachiyo {
      if(active!=null&&(p.interruptPolicy=="replace"||p.priority>active.payload.priority))CancelPerformances("replaced");
      Receipt(msg,"accepted");performances.Enqueue(msg);break;
     case "state":
+     avatar.SetCharacterState(p.mode,p.emotion,p.holdMs);
      if(active==null){if(!string.IsNullOrEmpty(p.emotion))Emotion(p.emotion,.65f,p.holdMs);else if(p.mode=="thinking")Emotion("thinking",.5f,2400);else if(p.mode=="idle"||p.mode=="listening")face.SetEmotion(FaceEmotion.Neutral);}
      break;
     case "audio":
      Debug.Log("DIRECTOR_AUDIO "+p.@event+" seq="+msg.seq+" current="+(msg.utteranceId==utterance));
-     if(p.@event=="start"&&!string.IsNullOrEmpty(msg.utteranceId)){utterance=msg.utteranceId;mouthClock=-1;face.CloseAudioMouth();}
-     else if(msg.utteranceId==utterance){utterance="";face.CloseAudioMouth();}
+     if(p.@event=="start"&&!string.IsNullOrEmpty(msg.utteranceId)){utterance=msg.utteranceId;mouthClock=-1;face.CloseAudioMouth();avatar.SpeechAudio(p.source=="speech");if(p.source=="speech")avatar.SetCharacterState("speaking",p.emotion,15000);}
+     else if(msg.utteranceId==utterance){CancelSpeechPerformances(utterance);utterance="";face.CloseAudioMouth();avatar.SpeechAudio(false);}
      break;
     case "mouth":
      if(string.IsNullOrEmpty(utterance)||msg.utteranceId!=utterance||p.audioTimeMs<mouthClock)return;
-     mouthClock=p.audioTimeMs;ReceivedMouthFrames++;face.SetAudioMouth(p.value,p.a,p.i,p.u,p.e,p.o,p.silence);break;
+     mouthClock=p.audioTimeMs;avatar.SpeechFrame(p.audioTimeMs/1000f,p.value);ReceivedMouthFrames++;face.SetAudioMouth(p.value,p.a,p.i,p.u,p.e,p.o,p.silence);break;
    }
   }
   IEnumerator Execute(Message msg,int version){
@@ -158,7 +163,9 @@ namespace Yachiyo {
      if(!started){Receipt(msg,"started");started=true;}
      body=true;began=Time.unscaledTime;
     }else switch(action.type){
-     case "wave":case "bow":case "nod":case "turn":case "head_tilt":case "shake_head":ui.StopMotion(true);avatar.Act(action.type,action.type);body=true;break;
+     case "wave":case "bow":case "turn":ui.StopMotion(true);avatar.Act(action.type,action.type);body=true;break;
+     case "nod":case "head_tilt":case "shake_head":case "explain":case "open_palms":case "emphasis":case "lean_in":case "lean_left":case "lean_right":case "sway":case "breathe":
+      avatar.Gesture(action.type,Mathf.Clamp(action.durationMs>0?action.durationMs:duration*1000,350,15000)/1000,action.intensity>0?action.intensity:Mathf.Max(.4f,p.intensity),action.side);break;
      case "blink":face.ForceBlink();break;
      case "smile":case "smirk":Emotion("happy",Mathf.Max(.5f,action.intensity),duration*1000);break;
      case "look_at_chat":face.SetLookTarget(ui.view.transform);gazeUntil=Time.unscaledTime+duration;break;
@@ -173,8 +180,9 @@ namespace Yachiyo {
   }
   void Finish(){active=null;execution=null;}
   static bool IsRemote(string type,string mode)=>type=="walk"||type=="clap"||type=="dance"||(mode=="model"&&(type=="wave"||type=="bow"||type=="turn"));
-  void SendReady(){face.Initialize();Send(new Ready{capabilities=new Capabilities{humanoid=avatar.animator&&avatar.animator.avatar.isHuman,audioVisemes=face.HasAudioVisemes,shapeCount=face.BoundShapeCount,actions=actions,selectedBackend=ui.SelectedBackend,serviceConnected=ui.ServiceConnected,emotions=new[]{"neutral","happy","surprised","sad","thinking","angry"}}});}
+  void SendReady(){face.Initialize();Send(new Ready{capabilities=new Capabilities{humanoid=avatar.animator&&avatar.animator.avatar.isHuman,audioVisemes=face.HasAudioVisemes,shapeCount=face.BoundShapeCount,actions=actions,selectedBackend=ui.SelectedBackend,serviceConnected=ui.ServiceConnected,cameraX=ui.DirectorFraming.x,cameraY=ui.DirectorFraming.y,cameraDistance=ui.DirectorCameraDistance,cameraYaw=ui.DirectorCameraYaw,cameraPitch=ui.DirectorCameraPitch,cameraLocked=ui.DirectorCameraLocked,emotions=new[]{"neutral","happy","surprised","sad","thinking","angry"}}});}
   void Emotion(string name,float amount,float duration){
+   avatar.SetConversationEmotion(name);
    string n=(name??"").ToLowerInvariant();FaceEmotion e=FaceEmotion.Neutral;
    if(n.Contains("happy")||n.Contains("smil")||n.Contains("joy")||n.Contains("smirk")||n.Contains("excited"))e=FaceEmotion.Happy;
    else if(n.Contains("surpris")||n.Contains("shock"))e=FaceEmotion.Surprised;
@@ -187,13 +195,21 @@ namespace Yachiyo {
    LastReceipt=state;Send(new Message{type="receipt",sessionId=msg.sessionId,epoch=msg.epoch,commandId=msg.commandId,state=state,reason=reason});
    Debug.Log("DIRECTOR_RECEIPT "+state+(string.IsNullOrEmpty(reason)?"":" "+reason));
   }
+  void CancelSpeechPerformances(string id){
+   if(string.IsNullOrEmpty(id))return;
+   if(active!=null&&active.utteranceId==id){generation++;if(execution!=null)StopCoroutine(execution);execution=null;Receipt(active,"cancelled","speech-ended");active=null;ui.StopMotion(true);}
+   int count=performances.Count;
+   for(int i=0;i<count;i++){var queued=performances.Dequeue();if(queued.utteranceId==id)Receipt(queued,"cancelled","speech-ended");else performances.Enqueue(queued);}
+   avatar.EndConversationGesture();
+  }
   void CancelPerformances(string reason){
    generation++;if(execution!=null)StopCoroutine(execution);execution=null;
    if(active!=null)Receipt(active,"cancelled",reason);active=null;
    while(performances.Count>0)Receipt(performances.Dequeue(),"cancelled",reason);
+   if(avatar)avatar.EndConversationGesture();
    if(ui&&avatar)ui.StopMotion(true);
   }
-  void Clear(string reason){CancelPerformances(reason);utterance="";mouthClock=-1;seen.Clear();emotionUntil=0;gazeUntil=0;if(face){face.CloseAudioMouth();face.SetEmotion(FaceEmotion.Neutral);face.SetLookTarget(null);}}
+  void Clear(string reason){CancelPerformances(reason);if(avatar)avatar.ResetConversation();utterance="";mouthClock=-1;seen.Clear();emotionUntil=0;gazeUntil=0;if(face){face.CloseAudioMouth();face.SetEmotion(FaceEmotion.Neutral);face.SetLookTarget(null);}}
   void OnDestroy(){if(ui)ui.LocalStopRequested-=LocalStop;lifetime?.Cancel();Clear("destroyed");if(gaze)Destroy(gaze.gameObject);}
   void OnGUI(){
    if(!font)return;float scale=Mathf.Min(Screen.width/1280f,Screen.height/800f);var old=GUI.matrix;GUI.matrix=Matrix4x4.Scale(new Vector3(scale,scale,1));

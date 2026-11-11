@@ -4,7 +4,7 @@ const clamp = n => Math.max(0, Math.min(1, Number(n) || 0));
 // Semantic boundary: this runs before any Cubism parameter conversion.
 export function createUnityAvatarDriver({ url, onStatus = () => {}, onReceipt = () => {}, WebSocketClass = WebSocket, events = window, getBodyMode = () => 'model' } = {}) {
   let socket, disposed = false, retry, sessionId = '', epoch = 0, seq = 0, ready = false;
-  let activeAudio = null, lastMouthAt = 0, lastReceipt = null;
+  let activeAudio = null, lastMouthAt = 0, lastReceipt = null, lastEmotion = 'neutral';
   const audioIds = new WeakMap(), timers = new Set();
   const driver = { mode: 'unity', perform, cancel, audioStart, audioEnd, mouth, state, dispose, control: (action, value) => send('control', { action, value: typeof value === 'number' ? value : 0, text: typeof value === 'string' ? value : '' }),
     get ready() { return ready; }, get lastReceipt() { return lastReceipt; }, get context() { return { sessionId, epoch, utteranceId: activeAudio?.id || '' }; } };
@@ -25,15 +25,17 @@ export function createUnityAvatarDriver({ url, onStatus = () => {}, onReceipt = 
   function perform(intent) {
     if (!intent || !ready) return null;
     const steps = Array.isArray(intent.sequence) && intent.sequence.length ? intent.sequence.slice(0, 12) : [intent];
-    const context = { sessionId, epoch };
+    const context = { sessionId, epoch, utteranceId: activeAudio?.id || '' };
     let offset = 0;
     const commandIds = [];
     for (const step of steps) {
       offset += Math.max(0, Math.min(12000, Number(step.delayMs) || 0));
       const execute = () => {
-        if (context.sessionId !== sessionId || context.epoch !== epoch) return;
+        if (context.sessionId !== sessionId || context.epoch !== epoch || (context.utteranceId && context.utteranceId !== activeAudio?.id)) return;
+        const stepEmotion = step.emotion || step.expression;
+        if (stepEmotion) lastEmotion = stepEmotion;
         commandIds.push(send('perform', {
-          emotion: step.emotion || step.expression || 'neutral', intensity: clamp(step.intensity ?? .65),
+          emotion: stepEmotion || lastEmotion, intensity: clamp(step.intensity ?? .65),
           durationMs: Math.max(260, Math.min(15000, Number(step.durationMs) || 3500)),
           bodyMode: step.bodyMode || intent.bodyMode || getBodyMode(),
           priority: Math.max(0, Math.min(100, Math.round(Number(step.priority) || 0))),
@@ -47,7 +49,7 @@ export function createUnityAvatarDriver({ url, onStatus = () => {}, onReceipt = 
     }
     return { ...intent, commandIds };
   }
-  function state(detail = {}) { return send('state', { mode: detail.mode || 'idle', emotion: detail.emotion || '', holdMs: Math.min(15000, Number(detail.holdMs) || 0) }); }
+  function state(detail = {}) { const emotion = detail.emotion || ''; if (emotion) lastEmotion = emotion; return send('state', { mode: detail.mode || 'idle', emotion, holdMs: Math.min(15000, Number(detail.holdMs) || 0) }); }
   function audioStart(audio, { source = 'speech', turnId = '' } = {}) {
     if (!ready) return;
     let token = audioIds.get(audio);
@@ -55,7 +57,7 @@ export function createUnityAvatarDriver({ url, onStatus = () => {}, onReceipt = 
     if (activeAudio) audioEnd(activeAudio.audio);
     token = { audio, source, id: uuid(), turnId: turnId || uuid(), epoch, sessionId };
     audioIds.set(audio, token); activeAudio = token;
-    send('audio', { event: 'start', source, audioTimeMs: Math.round((audio.currentTime || 0) * 1000) }, { turnId: token.turnId, utteranceId: token.id });
+    send('audio', { event: 'start', source, emotion: lastEmotion, audioTimeMs: Math.round((audio.currentTime || 0) * 1000) }, { turnId: token.turnId, utteranceId: token.id });
   }
   function audioEnd(audio, event = 'end') {
     const token = audioIds.get(audio);

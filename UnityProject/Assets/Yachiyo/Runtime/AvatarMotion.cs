@@ -4,14 +4,14 @@ using UnityEngine;
 
 namespace Yachiyo {
  [DefaultExecutionOrder(-100)]
- public class AvatarMotion : MonoBehaviour {
+ public partial class AvatarMotion : MonoBehaviour {
   public Animator animator;
   public bool followPointer=true;
   public string CurrentAction {get;private set;}="待机";
   public string MotionSource {get;private set;}="本地动作";
   public float Progress => clip==null?0:Mathf.Clamp01(clock/Mathf.Max(0.01f,clip.Duration));
   public bool Playing => clip!=null;
-  public bool LocalActionActive=>clip==null&&localAction!="idle";
+  public bool LocalActionActive=>(clip==null&&localAction!="idle")||ConversationGestureActive;
   public bool Streaming {get;private set;}
   public int CurrentSequence=>clip==null?0:clip.sequence;
   public float BufferedSeconds {get{float seconds=clip==null?0:Mathf.Max(0,clip.frames.Length/clip.fps-clock);foreach(var c in streamQueue)seconds+=c.frames.Length/c.fps;return seconds;}}
@@ -32,6 +32,8 @@ namespace Yachiyo {
   Vector3 hipsRest, startRoot, transitionHips;
   float hipHeight, clock, blendClock=1, actionTime, nextBlink=3, blinkClock=-1;
   string localAction="idle";
+  string stateMode="idle",stateEmotion="";
+  float stateUntil,stateClock;
   bool initialized;
   public void Initialize() {
    if(initialized)return;
@@ -61,6 +63,12 @@ namespace Yachiyo {
   }
   void Start()=>Initialize();
   void CaptureTransition() {foreach(var p in bones)transition[p.Key]=p.Value.localRotation;transitionHips=bones[HumanBodyBones.Hips].localPosition;blendClock=0;}
+  public void SetCharacterState(string mode,string emotion,float holdMs){
+   Initialize();string m=(mode??"").ToLowerInvariant();if(m=="acting")m="speaking";
+   if(m!=stateMode){stateMode=m;stateClock=0f;}
+   SetConversationEmotion(emotion);stateUntil=Time.unscaledTime+Mathf.Clamp(holdMs/1000f,1.2f,30f);
+  }
+  public string CharacterState=>stateMode;
   public void Play(MotionClip motion,string label) {
    Streaming=false;streamQueue.Clear();Initialize(); motion.Validate();CaptureTransition();clip=motion;clock=0;CurrentAction=label;MotionSource=motion.source;
    mapping=new HumanBodyBones[motion.bones.Length];for(int i=0;i<mapping.Length;i++) mapping[i]=Enum.TryParse(motion.bones[i],out HumanBodyBones b)?b:HumanBodyBones.LastBone;
@@ -101,18 +109,50 @@ namespace Yachiyo {
     RotateWorld(HumanBodyBones.LeftUpperArm,Vector3.forward,70);
     RotateWorld(HumanBodyBones.RightUpperArm,Vector3.forward,-70);
     RotateLocal(HumanBodyBones.Chest,new Vector3(breathe*0.7f,0,0));
-    if(localAction=="wave") {
-     RotateWorld(HumanBodyBones.RightUpperArm,Vector3.forward,95);
-     RotateWorld(HumanBodyBones.RightLowerArm,Vector3.forward,65+12*Mathf.Sin(actionTime*7));
-     RotateLocal(HumanBodyBones.RightHand,new Vector3(0,0,12*Mathf.Sin(actionTime*7)));
+    float actionDuration=ActionDuration(localAction);
+    float envelope=localAction=="idle"?0f:ActionEnvelope(actionTime,actionDuration);
+    if(localAction=="wave"){
+     float swing=Mathf.Sin(actionTime*7f);
+     RotateWorld(HumanBodyBones.RightUpperArm,Vector3.forward,30f*envelope);
+     RotateWorld(HumanBodyBones.RightLowerArm,Vector3.forward,28f*envelope+12f*swing*envelope);
+     RotateLocal(HumanBodyBones.RightHand,new Vector3(0,0,10f*swing*envelope));
+     RotateLocal(HumanBodyBones.Chest,new Vector3(0,-6f*envelope,0));
+     RotateLocal(HumanBodyBones.Neck,new Vector3(0,5f*envelope,0));
+     RotateLocal(HumanBodyBones.Head,new Vector3(0,4f*envelope,6f*envelope));
+     RotateLocal(HumanBodyBones.Hips,new Vector3(0,3f*envelope,0));
     }
-    if(localAction=="bow")RotateLocal(HumanBodyBones.Spine,new Vector3(25*Mathf.Sin(Mathf.Clamp01(actionTime/2.8f)*Mathf.PI),0,0));
-    if(localAction=="nod")RotateLocal(HumanBodyBones.Head,new Vector3(10*Mathf.Sin(actionTime*5),0,0));
-    if(localAction=="head_tilt")RotateLocal(HumanBodyBones.Head,new Vector3(0,0,10*Mathf.Sin(Mathf.Clamp01(actionTime/3.5f)*Mathf.PI)));
-    if(localAction=="shake_head")RotateLocal(HumanBodyBones.Head,new Vector3(0,12*Mathf.Sin(actionTime*5),0));
-    if(localAction=="turn")RotateWorld(HumanBodyBones.Hips,Vector3.up,Mathf.SmoothStep(0,360,Mathf.Clamp01(actionTime/3)));
-    if(localAction!="idle"&&actionTime>3.5f)Act("idle","待机");
+    if(localAction=="bow"){
+     RotateLocal(HumanBodyBones.Spine,new Vector3(22f*envelope,0,0));
+     RotateLocal(HumanBodyBones.Chest,new Vector3(10f*envelope,0,0));
+     RotateLocal(HumanBodyBones.Neck,new Vector3(8f*envelope,0,0));
+     RotateLocal(HumanBodyBones.Head,new Vector3(5f*envelope,0,0));
+     RotateLocal(HumanBodyBones.Hips,new Vector3(-4f*envelope,0,0));
+    }
+    if(localAction=="nod"){
+     float nod=Mathf.Sin(Mathf.Clamp01(actionTime/Mathf.Max(.2f,actionDuration))*Mathf.PI*2f)*envelope;
+     RotateLocal(HumanBodyBones.Neck,new Vector3(7f*nod,0,0));
+     RotateLocal(HumanBodyBones.Head,new Vector3(5f*nod,0,0));
+     RotateLocal(HumanBodyBones.Chest,new Vector3(2f*nod,0,0));
+    }
+    if(localAction=="head_tilt"){
+     RotateLocal(HumanBodyBones.Neck,new Vector3(0,0,8f*envelope));
+     RotateLocal(HumanBodyBones.Head,new Vector3(0,0,8f*envelope));
+    }
+    if(localAction=="shake_head"){
+     float shake=Mathf.Sin(actionTime*8f)*envelope;
+     RotateLocal(HumanBodyBones.Neck,new Vector3(0,6f*shake,0));
+     RotateLocal(HumanBodyBones.Head,new Vector3(0,6f*shake,0));
+    }
+    if(localAction=="turn"){
+     float turn=Mathf.SmoothStep(0,360,Mathf.Clamp01(actionTime/Mathf.Max(.2f,actionDuration)));
+     RotateWorld(HumanBodyBones.Hips,Vector3.up,turn);
+     RotateLocal(HumanBodyBones.Chest,new Vector3(0,4f*Mathf.Sin(turn*Mathf.Deg2Rad),0));
+     RotateLocal(HumanBodyBones.Head,new Vector3(0,6f*Mathf.Sin(turn*Mathf.Deg2Rad),0));
+    }
+    if(localAction=="idle")RotateLocal(HumanBodyBones.Hips,new Vector3(0,Mathf.Sin(actionTime*.55f)*1.1f,0));
+    if(localAction!="idle"&&actionTime>actionDuration+.55f)Act("idle","待机");
    }
+   ApplyConversation(dt,clip!=null,localAction!="idle");
    float blend=Mathf.SmoothStep(0,1,Mathf.Clamp01(blendClock/0.3f));
    if(blend<1){foreach(var p in transition)bones[p.Key].localRotation=Quaternion.Slerp(p.Value,bones[p.Key].localRotation,blend);bones[HumanBodyBones.Hips].localPosition=Vector3.Lerp(transitionHips,bones[HumanBodyBones.Hips].localPosition,blend);}
    if(followPointer&&clip==null&&localAction=="idle") {
@@ -127,6 +167,13 @@ namespace Yachiyo {
     foreach(var s in blink)s.mesh.SetBlendShapeWeight(s.index,weight);
     foreach(var s in smile)s.mesh.SetBlendShapeWeight(s.index,expression*70);
    }
+  }
+  static float ActionDuration(string action){
+   switch(action){case "nod":return 1.6f;case "head_tilt":return 2.4f;case "shake_head":return 1.8f;case "bow":return 2.8f;case "turn":return 3.0f;default:return 3.2f;}
+  }
+  static float ActionEnvelope(float time,float duration){
+   float fade=Mathf.Min(.38f,duration*.30f);
+   return Mathf.SmoothStep(0f,1f,Mathf.Clamp01(time/fade))*Mathf.SmoothStep(0f,1f,Mathf.Clamp01((duration-time)/fade));
   }
   // Native sleeve constraints evaluate after this pose and before late cloth solving.
   void Update()=>Tick(Time.deltaTime);
