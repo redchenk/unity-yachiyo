@@ -4,6 +4,7 @@ import { configureAssetCssVars } from '../../src/frontend/utils/assetUrl';
 import { installYachiyoMusicWindowApi } from '../../src/frontend/services/room/yachiyoMusicAdapter';
 import './style.css';
 import './spring.css';
+import './broadcast.css';
 
 if (new URLSearchParams(location.search).has('unified')) document.body.classList.add('unified-director');
 configureAssetCssVars();

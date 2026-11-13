@@ -2737,7 +2737,7 @@ onUnmounted(() => {
         </div>
         <div v-if="!isSinging || !songs.active.value" class="live2d-caption">
           <header class="live2d-caption-head">
-            <span>当前发言</span>
+            <span>八千代</span>
             <button
               class="live2d-mini-btn"
               type="button"
@@ -2748,7 +2748,7 @@ onUnmounted(() => {
               <span>{{ messagesExpanded ? '收起' : '全部消息' }}</span>
             </button>
           </header>
-          <p>{{ latestCaption || '等待当前消息' }}</p>
+          <p :class="{ 'is-empty': !latestCaption }">{{ latestCaption || '等待当前消息' }}</p>
         </div>
         <div v-if="messagesExpanded" class="live2d-feed" aria-live="polite">
           <header>

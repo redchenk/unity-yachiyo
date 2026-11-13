@@ -43,8 +43,13 @@ onUnmounted(() => {
 <template>
   <div class="studio-app-shell" :class="{ 'is-workspace-collapsed': workspaceCollapsed }">
     <header class="studio-masthead">
-      <div class="studio-wordmark"><span class="studio-moon-mark">☾</span><div><strong>月读 · 八千代</strong><small>YACHIYO UNITY DIRECTOR</small></div></div>
-      <div class="studio-season-heading"><span>春日直播间</span><small>让声音、表情与故事在这里相遇</small></div>
+      <div class="studio-wordmark"><span class="studio-moon-mark">☾</span><div><strong>月读 · 八千代</strong><small>Unity 导播台</small></div></div>
+      <div class="studio-season-heading" aria-hidden="true">
+        <span class="studio-onair"><i></i>ON AIR</span>
+        <span class="studio-scene-label" data-scene="chat">聊天直播</span>
+        <span class="studio-scene-label" data-scene="singing">唱歌模式</span>
+        <span class="studio-scene-label" data-scene="game">游戏直播</span>
+      </div>
       <button class="studio-memory-shortcut" type="button" @click="settingsTab = 'memory'; settingsOpen = true"><TsIcon name="note" :size="16" /> 长记忆</button>
     </header>
     <Live2DPage

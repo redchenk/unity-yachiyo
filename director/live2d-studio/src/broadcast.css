@@ -1,0 +1,787 @@
+/*
+ * 春昼导播台 · Daylight control room
+ * Final theme layer for the Yachiyo director. Loaded after style.css and spring.css.
+ *
+ * Idea: a quiet, light console around one bright program monitor. Surfaces are
+ * white on a lavender mist taken from the stage sky, text is indigo ink, sakura
+ * rose marks what you can act on, and red means one thing only: we are on air.
+ *
+ * Constraints kept from the native Unity bridge (see main.js / YachiyoWebView.mm):
+ *  - .live2d-stage keeps spring-lake-stage.png at center / cover. Unity draws the
+ *    same image behind the character, so the stage background must stay untinted.
+ *  - The Unity aperture is the stage area between the top bar and the caption HUD.
+ *    It is cut out of the web view, so nothing that must be seen may sit inside it.
+ *  - The caption block has a fixed height so the Unity camera viewport does not
+ *    resize every time a sentence changes length.
+ *
+ * Remove the import in main.js to go back to the previous spring theme.
+ */
+
+:root {
+  --bc-bg: #f3f2f8;
+  --bc-surface: #ffffff;
+  --bc-well: #f8f7fb;
+  --bc-field: #f6f5fa;
+  --bc-hover: rgb(34 29 51 / 4.5%);
+  --bc-line: rgb(34 29 51 / 8%);
+  --bc-line-2: rgb(34 29 51 / 12%);
+  --bc-line-3: rgb(34 29 51 / 22%);
+  --bc-ink: #221d33;
+  --bc-ink-2: #5a546d;
+  --bc-ink-3: #75708a;
+  --bc-accent: #b8436f;
+  --bc-accent-soft: #fbeaf1;
+  --bc-accent-line: rgb(184 67 111 / 26%);
+  --bc-cta: linear-gradient(135deg, #d2598b, #a93b67);
+  --bc-air: #dd2d4c;
+  --bc-air-soft: #fdebee;
+  --bc-ok: #1d8c66;
+  --bc-ok-soft: #e4f4ed;
+  --bc-warn: #9a6210;
+  --bc-warn-soft: #fbf1df;
+  --bc-violet: #6656c4;
+  --bc-moon: #e3c477;
+  --bc-night: #2a2442;
+  --bc-shadow: 0 1px 2px rgb(34 29 51 / 4%), 0 10px 28px -18px rgb(34 29 51 / 22%);
+  --bc-shadow-pop: 0 24px 70px -24px rgb(34 29 51 / 34%);
+  --bc-r-l: 18px;
+  --bc-r-m: 12px;
+  --bc-top: 72px;
+  --bc-gap: 12px;
+  --bc-ease: cubic-bezier(.2, .7, .2, 1);
+  --bc-serif: 'Songti SC', 'Source Han Serif SC', 'Noto Serif SC', 'Noto Serif CJK SC', 'STSong', serif;
+  --bc-sans: 'PingFang SC', 'HarmonyOS Sans SC', 'MiSans', -apple-system, BlinkMacSystemFont, 'Microsoft YaHei', 'Noto Sans SC', 'Noto Sans CJK SC', sans-serif;
+  /* Retint the variables the older layers still read. */
+  --spring-ink: var(--bc-ink);
+  --spring-muted: var(--bc-ink-2);
+  --spring-line: var(--bc-line-2);
+  --spring-rose: var(--bc-accent);
+  --spring-soft: var(--bc-accent-soft);
+  --studio-nav-width: 172px;
+  --studio-control-width: 368px;
+  color-scheme: light;
+  font-family: var(--bc-sans);
+}
+
+body.vue-live2d-route { color: var(--bc-ink); background: var(--bc-bg); }
+.studio-app-shell { color: var(--bc-ink); background: var(--bc-bg); font-family: var(--bc-sans); -webkit-font-smoothing: antialiased; }
+.studio-app-shell.is-workspace-collapsed { --studio-nav-width: 60px; }
+.studio-app-shell ::selection { color: var(--bc-ink); background: rgb(210 89 139 / 22%); }
+.studio-app-shell input, .studio-app-shell select, .studio-app-shell textarea { accent-color: var(--bc-accent); color-scheme: light; }
+.studio-app-shell :focus-visible { outline: 2px solid var(--bc-accent); outline-offset: 2px; }
+.studio-app-shell ::-webkit-scrollbar { width: 8px; height: 8px; }
+.studio-app-shell ::-webkit-scrollbar-track { background: transparent; }
+.studio-app-shell ::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 8px; background: rgb(34 29 51 / 14%) padding-box; }
+.studio-app-shell ::-webkit-scrollbar-thumb:hover { background: rgb(34 29 51 / 26%) padding-box; }
+
+/* ───────────── Masthead ───────────── */
+.studio-app-shell .studio-masthead {
+  height: 60px; gap: 20px; padding: 0 16px 0 18px;
+  border-bottom: 1px solid var(--bc-line);
+  background: rgb(255 255 255 / 82%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+}
+.studio-app-shell .studio-wordmark { gap: 11px; min-width: 0; }
+.studio-app-shell .studio-wordmark > div { gap: 1px; }
+.studio-app-shell .studio-wordmark strong { color: var(--bc-ink); font-family: var(--bc-serif); font-size: 18px; font-weight: 600; letter-spacing: .08em; }
+.studio-app-shell .studio-wordmark small { color: var(--bc-ink-3); font-size: 11px; letter-spacing: .02em; }
+/* The only night in the room: a small moon chip. */
+.studio-app-shell .studio-moon-mark {
+  width: 34px; height: 34px;
+  color: var(--bc-moon);
+  background: radial-gradient(circle at 32% 28%, #3d3560, var(--bc-night) 70%);
+  box-shadow: 0 4px 12px -4px rgb(42 36 66 / 45%);
+  font-size: 21px;
+  text-shadow: 0 0 10px rgb(227 196 119 / 55%);
+}
+
+/* On-air sign: unlit on standby, lit red while the director is running. */
+.studio-app-shell .studio-season-heading { display: flex; align-items: center; gap: 12px; height: 28px; margin-left: 4px; padding-left: 20px; border-left: 1px solid var(--bc-line); }
+.studio-app-shell .studio-season-heading .studio-onair {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 26px; padding: 0 11px 0 9px;
+  border: 1px solid var(--bc-line-2); border-radius: 6px;
+  color: var(--bc-ink-3); background: var(--bc-well);
+  font-size: 11px; font-weight: 700; letter-spacing: .16em; line-height: 1;
+  transition: color .4s var(--bc-ease), background .4s var(--bc-ease), border-color .4s var(--bc-ease), box-shadow .4s var(--bc-ease);
+}
+.studio-app-shell .studio-onair i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .6; }
+.studio-app-shell .studio-season-heading .studio-scene-label { display: none; color: var(--bc-ink-2); font-size: 13px; font-weight: 500; }
+.studio-app-shell .studio-season-heading .studio-scene-label[data-scene='chat'] { display: inline; }
+.studio-app-shell:has(.live2d-page[data-broadcast-scene='singing']) .studio-season-heading .studio-scene-label[data-scene='chat'],
+.studio-app-shell:has(.live2d-page[data-broadcast-scene='game']) .studio-season-heading .studio-scene-label[data-scene='chat'] { display: none; }
+.studio-app-shell:has(.live2d-page[data-broadcast-scene='singing']) .studio-season-heading .studio-scene-label[data-scene='singing'],
+.studio-app-shell:has(.live2d-page[data-broadcast-scene='game']) .studio-season-heading .studio-scene-label[data-scene='game'] { display: inline; }
+.studio-app-shell:has(.live2d-page[data-live-state='on']) .studio-season-heading .studio-onair {
+  color: #fff; border-color: transparent;
+  background: linear-gradient(180deg, #f0435f, #cf2242);
+  box-shadow: 0 0 0 3px rgb(221 45 76 / 13%), 0 6px 18px -4px rgb(221 45 76 / 55%);
+}
+.studio-app-shell:has(.live2d-page[data-live-state='on']) .studio-onair i { opacity: 1; animation: bc-onair 1.6s ease-in-out infinite; }
+.studio-app-shell:has(.live2d-page[data-live-state='on']) .studio-season-heading .studio-scene-label { color: var(--bc-ink); }
+@keyframes bc-onair { 50% { opacity: .3; } }
+
+.studio-app-shell .studio-memory-shortcut {
+  height: 34px; padding: 0 14px; gap: 7px;
+  border: 1px solid var(--bc-line-2); border-radius: 999px;
+  color: var(--bc-ink-2); background: var(--bc-surface);
+  font-size: 12px; font-weight: 500;
+  transition: color .2s, background .2s, border-color .2s;
+}
+.studio-app-shell .studio-memory-shortcut:hover { color: var(--bc-accent); border-color: var(--bc-accent-line); background: var(--bc-accent-soft); }
+
+/* ───────────── Left rail ───────────── */
+.studio-app-shell .studio-left-rail {
+  top: var(--bc-top); left: var(--bc-gap); bottom: var(--bc-gap);
+  width: var(--studio-nav-width);
+  padding: 10px; gap: 14px;
+  border: 1px solid var(--bc-line); border-radius: var(--bc-r-l);
+  color: var(--bc-ink-2); background: var(--bc-surface);
+  box-shadow: var(--bc-shadow);
+}
+.studio-app-shell .studio-rail-brand { min-height: 30px; padding-left: 8px; }
+.studio-app-shell .studio-rail-brand span { color: var(--bc-ink-3); font-size: 12px; font-weight: 500; letter-spacing: .04em; }
+.studio-app-shell .studio-workspace-toggle { width: 30px; height: 30px; border-radius: 8px; color: var(--bc-ink-3); }
+.studio-app-shell .studio-workspace-toggle:hover { color: var(--bc-ink); background: var(--bc-hover); }
+.studio-app-shell .studio-left-rail nav { gap: 2px; }
+.studio-app-shell .studio-rail-item {
+  position: relative;
+  min-height: 42px; gap: 12px; padding: 0 12px;
+  border: 0; border-radius: 10px;
+  color: var(--bc-ink-2); background: transparent;
+  font-size: 13px; font-weight: 500;
+  transition: color .18s, background .18s;
+}
+.studio-app-shell .studio-rail-item svg { width: 18px; height: 18px; }
+.studio-app-shell .studio-rail-item:hover { color: var(--bc-ink); background: var(--bc-hover); transform: none; }
+.studio-app-shell .studio-rail-item.active { color: var(--bc-accent); background: var(--bc-accent-soft); font-weight: 600; }
+.studio-app-shell .studio-rail-item.active::before {
+  content: ''; position: absolute; left: -10px; top: 11px; bottom: 11px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--bc-accent);
+}
+.studio-app-shell.is-workspace-collapsed .studio-rail-item.active::before { left: -8px; }
+.studio-app-shell .studio-rail-settings.active { color: var(--bc-ink); background: var(--bc-hover); }
+.studio-app-shell .studio-rail-settings.active::before { display: none; }
+.studio-app-shell .studio-rail-avatar {
+  height: 128px; min-height: 128px; padding: 12px; gap: 3px;
+  border: 1px solid rgb(184 67 111 / 12%); border-radius: 14px;
+  background: linear-gradient(160deg, #fcf2f6 0%, #f5f2fc 100%);
+}
+.studio-app-shell .studio-rail-avatar img { width: 150px; top: -20px; right: -18px; opacity: .95; }
+.studio-app-shell .studio-rail-avatar strong { color: var(--bc-ink); font-family: var(--bc-serif); font-size: 13px; font-weight: 600; letter-spacing: .04em; }
+.studio-app-shell .studio-rail-avatar em { color: var(--bc-ink-3); font-size: 11px; font-style: normal; }
+
+/* ───────────── Stage (program monitor) ───────────── */
+.studio-app-shell .live2d-backdrop { background: none; }
+.studio-app-shell .live2d-page { --live2d-cyan: var(--bc-accent); --live2d-green: var(--bc-ok); --live2d-violet: var(--bc-violet); --live2d-pink: var(--bc-accent); --live2d-ink: var(--bc-ink); --live2d-muted: var(--bc-ink-2); --live2d-faint: var(--bc-ink-3); --live2d-line: var(--bc-line-2); --live2d-panel: var(--bc-surface); --live2d-panel-strong: var(--bc-surface); color: var(--bc-ink); background: transparent; }
+.studio-app-shell .live2d-stage {
+  top: var(--bc-top);
+  left: calc(var(--studio-nav-width) + var(--bc-gap) * 2);
+  right: calc(var(--studio-control-width) + var(--bc-gap) * 2);
+  bottom: var(--bc-gap);
+  border: 1px solid rgb(34 29 51 / 10%);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgb(34 29 51 / 6%), 0 22px 56px -28px rgb(70 50 110 / 45%);
+  transition: box-shadow .5s var(--bc-ease), border-color .5s var(--bc-ease);
+}
+.studio-app-shell .live2d-page.is-controls-collapsed .live2d-stage { right: var(--bc-gap); }
+.studio-app-shell .live2d-page[data-live-state='on'] .live2d-stage {
+  border-color: var(--bc-air);
+  box-shadow: 0 0 0 4px rgb(221 45 76 / 14%), 0 0 44px -8px rgb(221 45 76 / 40%), 0 22px 56px -28px rgb(70 50 110 / 45%);
+}
+
+.studio-app-shell .live2d-stage-topbar {
+  top: 10px; left: 10px; right: 10px;
+  min-height: 46px; padding: 5px 6px 5px 12px; gap: 10px;
+  border: 1px solid rgb(255 255 255 / 85%); border-radius: 12px;
+  color: var(--bc-ink);
+  background: rgb(255 255 255 / 74%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  box-shadow: 0 10px 30px -18px rgb(50 30 90 / 45%);
+}
+.studio-app-shell .live2d-stage-title { gap: 10px; }
+.studio-app-shell .live2d-stage-title > div { display: grid; gap: 1px; }
+.studio-app-shell .live2d-stage-title strong { color: var(--bc-ink); font-size: 13px; font-weight: 600; letter-spacing: .02em; }
+.studio-app-shell .live2d-stage-title small { color: var(--bc-ink-3); font-size: 10px; font-weight: 600; letter-spacing: .1em; }
+.studio-app-shell .live2d-stage-dot { width: 8px; height: 8px; border-radius: 50%; background: rgb(34 29 51 / 25%); box-shadow: none; }
+.studio-app-shell .live2d-stage-dot.active { background: var(--bc-ok); box-shadow: 0 0 0 3px rgb(29 140 102 / 16%); }
+.studio-app-shell .live2d-page[data-live-state='on'] .live2d-stage-dot { background: var(--bc-air); box-shadow: 0 0 0 3px rgb(221 45 76 / 18%); animation: bc-onair 1.6s ease-in-out infinite; }
+
+.studio-app-shell .live2d-scene-switcher { gap: 2px; padding: 3px; border: 0; border-radius: 10px; background: rgb(34 29 51 / 6%); }
+.studio-app-shell .live2d-scene-switcher button {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 12px;
+  border: 0; border-radius: 8px;
+  color: var(--bc-ink-2); background: transparent;
+  font-size: 12px; font-weight: 500;
+  transition: color .18s, background .18s, box-shadow .18s;
+}
+.studio-app-shell .live2d-scene-switcher button:hover { color: var(--bc-ink); background: rgb(255 255 255 / 60%); }
+.studio-app-shell .live2d-scene-switcher button.active { color: var(--bc-accent); background: #fff; box-shadow: 0 1px 2px rgb(34 29 51 / 8%), 0 4px 10px -6px rgb(34 29 51 / 25%); font-weight: 600; }
+
+.studio-app-shell .live2d-stage-actions { gap: 4px; }
+.studio-app-shell .live2d-stage-actions .live2d-icon-btn {
+  width: 34px; height: 34px; min-width: 0; padding: 0;
+  border: 0; border-radius: 9px;
+  color: var(--bc-ink-2); background: transparent;
+}
+.studio-app-shell .live2d-stage-actions .live2d-icon-btn:hover { color: var(--bc-ink); background: rgb(34 29 51 / 7%); }
+
+/* Captions: a broadcast lower third with a fixed height. */
+.studio-app-shell .live2d-broadcast-hud { left: 12px; right: 12px; bottom: 12px; gap: 8px; }
+.studio-app-shell .live2d-caption {
+  --cap-size: clamp(16px, 1.3vw, 24px);
+  position: relative;
+  height: calc(var(--cap-size) * 3 + 28px);
+  min-height: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 16px;
+  padding: 0 10px 0 18px;
+  border: 1px solid rgb(255 255 255 / 90%);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 84%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+  box-shadow: 0 16px 40px -20px rgb(50 30 90 / 45%);
+  overflow: hidden;
+}
+.studio-app-shell .live2d-caption::before {
+  content: ''; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px; border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, #e27aa4, var(--bc-accent));
+}
+.studio-app-shell .live2d-caption-head { display: contents; }
+.studio-app-shell .live2d-caption-head > span {
+  grid-column: 1; grid-row: 1;
+  display: inline-flex; align-items: center; gap: 8px;
+  color: var(--bc-accent); font-family: var(--bc-serif); font-size: 15px; font-weight: 700; letter-spacing: .12em;
+  white-space: nowrap;
+}
+.studio-app-shell .live2d-caption-head > span::after { content: ''; width: 1px; height: 24px; margin-left: 8px; background: var(--bc-line-2); }
+.studio-app-shell .live2d-caption-head .live2d-mini-btn {
+  grid-column: 3; grid-row: 1; align-self: start; margin-top: 8px;
+  width: 30px; height: 30px; min-height: 0; padding: 0;
+  display: grid; place-items: center;
+  border: 0; border-radius: 8px;
+  color: var(--bc-ink-3); background: transparent;
+}
+.studio-app-shell .live2d-caption-head .live2d-mini-btn:hover,
+.studio-app-shell .live2d-caption-head .live2d-mini-btn[aria-expanded='true'] { color: var(--bc-ink); background: var(--bc-hover); }
+.studio-app-shell .live2d-caption-head .live2d-mini-btn span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.studio-app-shell .live2d-caption p {
+  grid-column: 2; grid-row: 1;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  margin: 0;
+  color: var(--bc-ink);
+  font-size: var(--cap-size); font-weight: 600; line-height: 1.5; letter-spacing: .01em;
+  text-shadow: none;
+  white-space: normal;
+}
+.studio-app-shell .live2d-caption p.is-empty { color: var(--bc-ink-3); font-size: calc(var(--cap-size) * .82); font-weight: 400; }
+/* Speaking: the accent bar breathes while audio plays. */
+.studio-app-shell .live2d-stage:has(.live2d-model[data-speaking='true']) .live2d-caption::before { animation: bc-speak .9s ease-in-out infinite alternate; }
+@keyframes bc-speak { from { opacity: .45; transform: scaleY(.7); } to { opacity: 1; transform: scaleY(1); } }
+
+.studio-app-shell .live2d-feed {
+  max-height: 34vh; min-height: 0;
+  padding: 12px 14px; gap: 4px;
+  border: 1px solid rgb(255 255 255 / 90%); border-radius: 14px;
+  color: var(--bc-ink);
+  background: rgb(255 255 255 / 92%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+  box-shadow: 0 16px 40px -20px rgb(50 30 90 / 45%);
+  overflow: auto;
+}
+.studio-app-shell .live2d-feed header strong { color: var(--bc-ink); font-size: 13px; font-weight: 600; }
+.studio-app-shell .live2d-feed-line { padding: 6px 0; border-color: var(--bc-line); }
+.studio-app-shell .live2d-feed-line strong { color: var(--bc-accent); font-size: 11px; letter-spacing: .06em; }
+.studio-app-shell .live2d-feed-line.audience strong { color: var(--bc-violet); }
+.studio-app-shell .live2d-feed-line.system strong { color: var(--bc-ink-3); }
+.studio-app-shell .live2d-feed-line time { color: var(--bc-ink-3); font-variant-numeric: tabular-nums; }
+.studio-app-shell .live2d-feed-line span { color: var(--bc-ink); }
+.studio-app-shell .live2d-feed-empty { color: var(--bc-ink-3); }
+
+.studio-app-shell .rvc-stage-player {
+  height: 62px; padding: 0 10px 0 16px; gap: 12px;
+  border: 1px solid rgb(255 255 255 / 90%); border-radius: 14px;
+  color: var(--bc-ink);
+  background: rgb(255 255 255 / 84%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+  box-shadow: 0 16px 40px -20px rgb(50 30 90 / 45%);
+}
+.studio-app-shell .rvc-stage-player > svg { color: var(--bc-accent); }
+.studio-app-shell .rvc-stage-song strong { color: var(--bc-ink); font-size: 14px; font-weight: 600; }
+.studio-app-shell .rvc-stage-song small { color: var(--bc-ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* Things that used to float inside the Unity aperture get moved out of it. */
+.studio-app-shell .live2d-error {
+  position: absolute; top: auto; left: 12px; right: 12px; bottom: 12px; z-index: 6;
+  max-width: none; transform: none;
+  padding: 14px 18px;
+  border: 1px solid rgb(221 45 76 / 30%); border-radius: 14px;
+  color: #8e1a31; background: #fff3f5;
+  box-shadow: 0 16px 40px -20px rgb(120 20 40 / 40%);
+  font-size: 13px; line-height: 1.6;
+}
+.studio-app-shell .live2d-loading {
+  top: 14px; bottom: auto; left: 50%; z-index: 70;
+  padding: 7px 14px; gap: 8px;
+  border: 1px solid var(--bc-line-2); border-radius: 999px;
+  color: var(--bc-ink-2); background: var(--bc-surface);
+  box-shadow: var(--bc-shadow);
+  font-size: 12px; font-weight: 500;
+}
+
+/* ───────────── Control column ───────────── */
+.studio-app-shell .live2d-control-panel {
+  top: var(--bc-top); right: var(--bc-gap); bottom: var(--bc-gap);
+  width: var(--studio-control-width);
+  gap: 12px; padding: 14px;
+  border: 1px solid var(--bc-line); border-radius: var(--bc-r-l);
+  color: var(--bc-ink);
+  background: var(--bc-surface);
+  box-shadow: var(--bc-shadow);
+}
+.studio-app-shell .live2d-panel-header { gap: 12px; padding: 2px 2px 12px; border-bottom: 1px solid var(--bc-line); }
+.studio-app-shell .live2d-status-copy { gap: 2px; }
+.studio-app-shell .live2d-status-copy > span { color: var(--bc-ink-3); font-size: 11px; font-weight: 500; letter-spacing: .04em; text-transform: none; }
+.studio-app-shell .live2d-status-copy strong { color: var(--bc-ink); font-family: var(--bc-serif); font-size: 22px; font-weight: 700; letter-spacing: .06em; line-height: 1.2; }
+.studio-app-shell .live2d-status-copy small { color: var(--bc-ink-2); font-size: 12px; }
+.studio-app-shell .live2d-status-copy small span { color: var(--bc-ink-3); }
+.studio-app-shell .live2d-status-orb { width: 40px; height: 40px; background: var(--bc-well); box-shadow: inset 0 0 0 1px var(--bc-line-2); }
+.studio-app-shell .live2d-status-orb::after { inset: 14px; background: rgb(34 29 51 / 25%); box-shadow: none; }
+.studio-app-shell .live2d-status-orb.ready { background: var(--bc-ok-soft); box-shadow: inset 0 0 0 1px rgb(29 140 102 / 22%); }
+.studio-app-shell .live2d-status-orb.ready::after { background: var(--bc-ok); box-shadow: 0 0 0 3px rgb(29 140 102 / 14%); }
+.studio-app-shell .live2d-status-orb.error { background: var(--bc-warn-soft); }
+.studio-app-shell .live2d-status-orb.error::after { background: #d99520; box-shadow: none; }
+.studio-app-shell .live2d-page[data-live-state='on'] .live2d-status-orb { background: var(--bc-air-soft); box-shadow: inset 0 0 0 1px rgb(221 45 76 / 25%); }
+.studio-app-shell .live2d-page[data-live-state='on'] .live2d-status-orb::after { background: var(--bc-air); box-shadow: 0 0 0 3px rgb(221 45 76 / 16%); animation: bc-onair 1.6s ease-in-out infinite; }
+.studio-app-shell .live2d-debug-toggle { width: 34px; height: 34px; }
+
+.studio-app-shell .live2d-primary-control {
+  gap: 12px; padding: 12px;
+  border: 1px solid var(--bc-line); border-radius: 14px;
+  background: var(--bc-well);
+}
+.studio-app-shell .live2d-primary-actions { gap: 8px; }
+.studio-app-shell .live2d-run-btn,
+.studio-app-shell .live2d-primary-control .live2d-run-btn {
+  min-height: 46px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  border: 0; border-radius: 11px;
+  color: #fff;
+  background: var(--bc-cta);
+  box-shadow: 0 8px 20px -10px rgb(184 67 111 / 70%), inset 0 1px 0 rgb(255 255 255 / 20%);
+  font-size: 14px; font-weight: 600; letter-spacing: .04em;
+  transition: filter .2s, transform .2s var(--bc-ease), box-shadow .2s;
+}
+.studio-app-shell .live2d-run-btn:hover:not(:disabled) { filter: brightness(1.06); transform: translateY(-1px); background: var(--bc-cta); }
+.studio-app-shell .live2d-run-btn:active:not(:disabled) { transform: translateY(0); }
+.studio-app-shell .live2d-run-btn:disabled { opacity: .45; filter: saturate(.55); box-shadow: none; cursor: not-allowed; }
+.studio-app-shell .live2d-page[data-live-state='on'] .live2d-primary-control .live2d-run-btn {
+  color: var(--bc-air);
+  background: #fff;
+  box-shadow: inset 0 0 0 1.5px rgb(221 45 76 / 55%);
+}
+.studio-app-shell .live2d-page[data-live-state='on'] .live2d-primary-control .live2d-run-btn:hover:not(:disabled) { background: var(--bc-air-soft); }
+.studio-app-shell .live2d-switch {
+  min-height: 46px; padding: 0 12px; gap: 8px;
+  border: 1px solid var(--bc-line-2); border-radius: 11px;
+  color: var(--bc-ink-2); background: var(--bc-surface);
+  font-size: 12px; font-weight: 500;
+}
+.studio-app-shell .live2d-switch:has(input:checked) { color: var(--bc-ink); }
+.studio-app-shell .live2d-switch input { width: 16px; height: 16px; }
+
+.studio-app-shell .live2d-session-options summary { color: var(--bc-accent); font-size: 12px; }
+.studio-app-shell .live2d-topic-field > span,
+.studio-app-shell .live2d-audience-field > span,
+.studio-app-shell .live2d-stream-duration-fields label > span { color: var(--bc-ink-2); font-size: 12px; font-weight: 500; }
+.studio-app-shell .live2d-topic-field > small,
+.studio-app-shell .live2d-audience-field > small { color: var(--bc-ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.studio-app-shell .live2d-stream-duration-fields { gap: 8px; }
+/* On air the duration fields are locked anyway; the clock takes their place. */
+.studio-app-shell .live2d-page[data-live-state='on'] .live2d-stream-duration-fields { display: none; }
+.studio-app-shell .live2d-stream-hint { color: var(--bc-ink-3); font-size: 11px; }
+.studio-app-shell .live2d-stream-clock {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 10px; padding: 10px 12px;
+  border: 1px solid rgb(221 45 76 / 18%); border-radius: 10px;
+  color: var(--bc-ink-2); background: var(--bc-surface);
+  font-size: 11px;
+}
+.studio-app-shell .live2d-stream-clock strong { display: block; margin: 2px 0 0; color: var(--bc-ink); font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.studio-app-shell .live2d-stream-clock small { color: var(--bc-ink-3); font-size: 11px; margin-top: 4px; }
+.studio-app-shell .live2d-stream-clock[data-phase='closing'], .studio-app-shell .live2d-stream-clock[data-phase='ending'] { color: var(--bc-warn); border-color: rgb(154 98 16 / 25%); background: var(--bc-warn-soft); }
+.studio-app-shell .live2d-inline-error { color: #b0223f; }
+.studio-app-shell .live2d-inline-status { color: var(--bc-ink-2); font-size: 12px; }
+.studio-app-shell label.live2d-inline-status { display: flex; align-items: center; gap: 8px; color: var(--bc-ink-2); }
+
+/* Fields everywhere */
+.studio-app-shell :is(.live2d-control-panel, .live2d-item-editor, .studio-settings-panel, .studio-music-page) :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), select, textarea) {
+  min-height: 38px;
+  border: 1px solid var(--bc-line-2); border-radius: 10px;
+  color: var(--bc-ink);
+  background-color: var(--bc-surface);
+  box-shadow: none;
+  font-size: 13px;
+  transition: border-color .18s, box-shadow .18s, background-color .18s;
+}
+.studio-app-shell :is(.live2d-control-panel, .live2d-item-editor, .studio-settings-panel, .studio-music-page) :is(input, select, textarea)::placeholder { color: var(--bc-ink-3); opacity: 1; }
+.studio-app-shell :is(.live2d-control-panel, .live2d-item-editor, .studio-settings-panel, .studio-music-page) :is(input:not([type='checkbox']):not([type='radio']):not([type='range']), select, textarea):hover { border-color: var(--bc-line-3); }
+.studio-app-shell :is(.live2d-control-panel, .live2d-item-editor, .studio-settings-panel, .studio-music-page) :is(input:not([type='checkbox']):not([type='radio']):not([type='range']), select, textarea):focus {
+  outline: none; border-color: rgb(184 67 111 / 55%);
+  box-shadow: 0 0 0 3px rgb(184 67 111 / 12%);
+}
+.studio-app-shell :is(.live2d-control-panel, .live2d-item-editor, .studio-settings-panel, .studio-music-page) :is(input, select, textarea):disabled { color: var(--bc-ink-3); background-color: var(--bc-field); }
+.studio-app-shell :is(.live2d-control-panel, .live2d-item-editor, .studio-settings-panel, .studio-music-page) select {
+  -webkit-appearance: none; appearance: none;
+  padding-right: 32px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--bc-ink-3) 50%), linear-gradient(135deg, var(--bc-ink-3) 50%, transparent 50%);
+  background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.studio-app-shell input[type='range'] { accent-color: var(--bc-accent); }
+
+/* Tabs */
+.studio-app-shell .live2d-workspace-tabs { gap: 2px; padding: 3px; border: 0; border-radius: 11px; background: rgb(34 29 51 / 5.5%); }
+.studio-app-shell .live2d-workspace-tabs button {
+  min-height: 34px; gap: 6px;
+  border: 0; border-radius: 8px;
+  color: var(--bc-ink-2); background: transparent;
+  font-size: 12px; font-weight: 500;
+  transition: color .18s, background .18s, box-shadow .18s;
+}
+.studio-app-shell .live2d-workspace-tabs button:hover { color: var(--bc-ink); background: rgb(255 255 255 / 55%); }
+.studio-app-shell .live2d-workspace-tabs button.active { color: var(--bc-accent); background: #fff; box-shadow: 0 1px 2px rgb(34 29 51 / 8%), 0 4px 10px -6px rgb(34 29 51 / 25%); font-weight: 600; }
+.studio-app-shell .rvc-mode-notice { color: var(--bc-ink-2); background: #f1effb; border: 1px solid rgb(102 86 196 / 16%); border-radius: 10px; font-size: 12px; line-height: 1.6; }
+
+/* Workspace: one frame, the tab content sits flat inside it. */
+.studio-app-shell .live2d-workspace {
+  border: 1px solid var(--bc-line); border-radius: 14px;
+  color: var(--bc-ink); background: var(--bc-well);
+  box-shadow: none;
+}
+.studio-app-shell .live2d-workspace > :is(.live2d-interaction-panel, .live2d-motion-panel, .live2d-music-panel, .yachiyo-music-panel, .rvc-panel) {
+  border: 0; border-radius: 0;
+  color: var(--bc-ink); background: transparent;
+  box-shadow: none;
+}
+.studio-app-shell .live2d-section-heading strong { color: var(--bc-ink); font-size: 14px; font-weight: 600; }
+.studio-app-shell .live2d-section-heading span { color: var(--bc-ink-3); font-size: 11px; }
+.studio-app-shell .live2d-live-dot { gap: 6px; padding: 3px 9px; border: 1px solid var(--bc-line-2); color: var(--bc-ink-2); background: var(--bc-surface); font-size: 11px; font-weight: 500; }
+.studio-app-shell .live2d-live-dot::before { background: rgb(34 29 51 / 30%); }
+.studio-app-shell .live2d-live-dot.active { color: var(--bc-air); border-color: rgb(221 45 76 / 28%); background: var(--bc-air-soft); }
+.studio-app-shell .live2d-live-dot.active::before { background: var(--bc-air); }
+.studio-app-shell .live2d-audience-preview {
+  gap: 10px; padding: 10px 12px;
+  border: 1px solid var(--bc-line); border-radius: 11px;
+  color: var(--bc-ink); background: var(--bc-surface);
+}
+.studio-app-shell .live2d-audience-preview > svg { color: var(--bc-violet); }
+.studio-app-shell .live2d-audience-preview span { color: var(--bc-ink-3); font-size: 11px; }
+.studio-app-shell .live2d-audience-preview strong { color: var(--bc-ink); font-size: 13px; font-weight: 500; }
+
+.studio-app-shell .live2d-icon-btn,
+.studio-app-shell .live2d-mini-btn {
+  border: 1px solid var(--bc-line-2);
+  color: var(--bc-ink-2); background: var(--bc-surface);
+  box-shadow: none;
+  transition: color .18s, background .18s, border-color .18s;
+}
+.studio-app-shell .live2d-icon-btn:hover:not(:disabled),
+.studio-app-shell .live2d-mini-btn:hover:not(:disabled) { color: var(--bc-ink); border-color: var(--bc-line-3); background: var(--bc-well); transform: none; }
+.studio-app-shell .live2d-icon-btn[aria-pressed='true'],
+.studio-app-shell .live2d-icon-btn.active { color: var(--bc-accent); border-color: var(--bc-accent-line); background: var(--bc-accent-soft); }
+.studio-app-shell .live2d-mic-btn.active { color: #fff; border-color: transparent; background: var(--bc-air); }
+.studio-app-shell .live2d-audience-row { gap: 6px; }
+.studio-app-shell .live2d-audience-row .live2d-icon-btn { width: 38px; height: 38px; min-height: 38px; border-radius: 10px; }
+
+.studio-app-shell .live2d-continuous-asr-btn {
+  gap: 12px; padding: 10px 12px;
+  border: 1px solid var(--bc-line); border-radius: 11px;
+  color: var(--bc-ink-2); background: var(--bc-surface);
+}
+.studio-app-shell .live2d-continuous-asr-btn:hover { border-color: var(--bc-line-3); background: var(--bc-surface); }
+.studio-app-shell .live2d-continuous-asr-btn strong { color: var(--bc-ink); font-size: 13px; font-weight: 500; }
+.studio-app-shell .live2d-continuous-asr-btn small { color: var(--bc-ink-3); font-size: 11px; }
+.studio-app-shell .live2d-continuous-asr-btn.active { color: var(--bc-ok); border-color: rgb(29 140 102 / 30%); background: var(--bc-ok-soft); }
+
+.studio-app-shell .live2d-volume-panel,
+.studio-app-shell .live2d-director-command { border-top: 1px solid var(--bc-line); color: var(--bc-ink-2); background: transparent; }
+.studio-app-shell .live2d-volume-panel > div:first-child span { color: var(--bc-ink-2); font-size: 12px; }
+.studio-app-shell .live2d-volume-panel > div:first-child strong { color: var(--bc-ink); font-size: 12px; font-variant-numeric: tabular-nums; }
+.studio-app-shell .live2d-mic-meter { color: var(--bc-ink-3); }
+.studio-app-shell .live2d-mic-meter span { background: rgb(34 29 51 / 10%); }
+.studio-app-shell .live2d-mic-meter span.active { background: linear-gradient(180deg, #4fd3a1, var(--bc-ok)); box-shadow: none; }
+.studio-app-shell .live2d-director-command summary { color: var(--bc-ink-2); font-size: 12px; }
+.studio-app-shell .live2d-director-command summary:hover { color: var(--bc-accent); }
+
+/* Character tab */
+.studio-app-shell .live2d-tabbar { gap: 2px; padding: 3px; border: 0; border-radius: 10px; background: rgb(34 29 51 / 5.5%); }
+.studio-app-shell .live2d-tabbar button { min-height: 30px; border: 0; border-radius: 7px; color: var(--bc-ink-2); background: transparent; font-size: 12px; font-weight: 500; }
+.studio-app-shell .live2d-tabbar button::after { display: none; }
+.studio-app-shell .live2d-tabbar button:hover { color: var(--bc-ink); background: rgb(255 255 255 / 55%); transform: none; }
+.studio-app-shell .live2d-tabbar button.active { color: var(--bc-accent); background: #fff; box-shadow: 0 1px 2px rgb(34 29 51 / 8%); font-weight: 600; }
+.studio-app-shell .live2d-tile-btn {
+  gap: 6px;
+  border: 1px solid var(--bc-line); border-radius: 12px;
+  color: var(--bc-ink-2); background: var(--bc-surface);
+  font-weight: 500;
+}
+.studio-app-shell .live2d-tile-btn svg { color: var(--bc-ink-2); }
+.studio-app-shell .live2d-tile-btn span { font-size: 12px; }
+.studio-app-shell .live2d-tile-btn:hover:not(:disabled) { color: var(--bc-accent); border-color: var(--bc-accent-line); background: var(--bc-accent-soft); transform: none; }
+.studio-app-shell .live2d-tile-btn:hover:not(:disabled) svg { color: var(--bc-accent); }
+
+.studio-app-shell .unity-stage-panel.compact {
+  padding: 12px; margin: 0 0 12px;
+  border: 1px solid var(--bc-line); border-radius: 12px;
+  color: var(--bc-ink-2); background: var(--bc-surface);
+  font-size: 12px;
+}
+.studio-app-shell .unity-stage-panel .unity-status { display: inline-flex; margin-bottom: 8px; color: var(--bc-ink-3); font-size: 12px; font-weight: 500; }
+.studio-app-shell .unity-stage-panel .unity-status.connected { color: var(--bc-ok); }
+.studio-app-shell .unity-stage-panel label { color: var(--bc-ink-2); }
+.studio-app-shell .unity-stage-panel select { display: block; width: 100%; margin-top: 6px; }
+.studio-app-shell .unity-stage-panel .speech-motion-setting { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--bc-ink); font-size: 12px; }
+.studio-app-shell .unity-stage-panel .speech-motion-status { color: var(--bc-ink-3); font-size: 11px; }
+.studio-app-shell .unity-stage-panel button {
+  min-height: 30px; padding: 0 11px;
+  border: 1px solid var(--bc-line-2); border-radius: 8px;
+  color: var(--bc-ink-2); background: var(--bc-surface);
+  font-size: 12px; cursor: pointer;
+  transition: color .18s, background .18s, border-color .18s;
+}
+.studio-app-shell .unity-stage-panel button:hover:not(:disabled) { color: var(--bc-accent); border-color: var(--bc-accent-line); background: var(--bc-accent-soft); }
+.studio-app-shell .unity-stage-panel button:disabled { opacity: .45; cursor: not-allowed; }
+.studio-app-shell .unity-stage-panel .unity-stage-buttons { gap: 6px; margin: 12px 0; }
+.studio-app-shell .unity-stage-panel .unity-stage-buttons button:last-child { color: var(--bc-air); border-color: rgb(221 45 76 / 30%); }
+.studio-app-shell .unity-framing { margin: 0; padding: 10px 12px 12px; border: 1px solid var(--bc-line); border-radius: 10px; color: var(--bc-ink-2); }
+.studio-app-shell .unity-framing legend { padding: 0 6px; color: var(--bc-ink); font-size: 12px; font-weight: 600; }
+.studio-app-shell .unity-stage-panel.compact p.unity-camera-help { color: var(--bc-ink-3); }
+.studio-app-shell .unity-framing label { color: var(--bc-ink-2); }
+.studio-app-shell .unity-position-buttons { gap: 5px; }
+.studio-app-shell .unity-position-buttons button { min-width: 34px; }
+.studio-app-shell .unity-receipt { color: var(--bc-ink-2); }
+
+/* Quick actions */
+.studio-app-shell .live2d-quick-actions { padding: 6px; border: 1px solid var(--bc-line); border-radius: 13px; background: var(--bc-well); }
+.studio-app-shell .live2d-quick-actions > div { gap: 4px; }
+.studio-app-shell .live2d-quick-btn {
+  min-height: 52px; gap: 4px;
+  border: 0; border-radius: 9px;
+  color: var(--bc-ink-2); background: transparent;
+  font-size: 11px; font-weight: 500;
+}
+.studio-app-shell .live2d-quick-btn svg { width: 19px; height: 19px; }
+.studio-app-shell .live2d-quick-btn:hover:not(:disabled) { color: var(--bc-ink); background: var(--bc-surface); box-shadow: 0 1px 2px rgb(34 29 51 / 8%); transform: none; }
+.studio-app-shell .live2d-quick-btn.active { color: var(--bc-accent); background: var(--bc-accent-soft); }
+
+/* Overlays that used to cover the Unity aperture now sit over the control column. */
+.studio-app-shell .live2d-item-editor,
+.studio-app-shell .live2d-debug-panel {
+  position: fixed;
+  top: var(--bc-top); right: var(--bc-gap); bottom: var(--bc-gap); left: auto;
+  z-index: 30;
+  width: var(--studio-control-width); max-width: none; min-width: 0; max-height: none;
+  border: 1px solid var(--bc-line-2); border-radius: var(--bc-r-l);
+  color: var(--bc-ink);
+  background: var(--bc-surface);
+  box-shadow: var(--bc-shadow-pop);
+  overflow: auto;
+}
+.studio-app-shell .live2d-item-editor-head { background: none; }
+.studio-app-shell .live2d-item-editor-head span,
+.studio-app-shell .live2d-item-section-title span,
+.studio-app-shell .live2d-debug-header span,
+.studio-app-shell .live2d-debug-metrics span,
+.studio-app-shell .live2d-debug-section h2 { color: var(--bc-ink-3); }
+.studio-app-shell .live2d-item-editor-head strong,
+.studio-app-shell .live2d-debug-header strong,
+.studio-app-shell .live2d-debug-metrics strong { color: var(--bc-ink); }
+.studio-app-shell :is(.live2d-item-editor, .live2d-debug-panel) small { color: var(--bc-ink-3); }
+.studio-app-shell :is(.live2d-item-asset, .live2d-item-row, .live2d-item-detail, .live2d-debug-metrics > div, .live2d-debug-section, .live2d-debug-list article) {
+  border-color: var(--bc-line); color: var(--bc-ink); background: var(--bc-well);
+}
+.studio-app-shell .live2d-item-row.active { border-color: var(--bc-accent-line); background: var(--bc-accent-soft); }
+.studio-app-shell .live2d-item-empty, .studio-app-shell .live2d-debug-section p { color: var(--bc-ink-3); }
+.studio-app-shell .live2d-debug-section pre { color: var(--bc-ink-2); background: var(--bc-surface); border-color: var(--bc-line); }
+.studio-app-shell .live2d-debug-param-list span, .studio-app-shell .live2d-debug-chip-row span, .studio-app-shell .live2d-debug-expression-state span { color: var(--bc-ink-2); background: var(--bc-surface); border-color: var(--bc-line); }
+.studio-app-shell .live2d-debug-param-list em { color: var(--bc-accent); }
+.studio-app-shell .live2d-debug-events article { border-color: var(--bc-line); color: var(--bc-ink-2); }
+.studio-app-shell .live2d-debug-events time { color: var(--bc-ink-3); }
+
+/* ───────────── Settings drawer ───────────── */
+.studio-app-shell .studio-settings-scrim { background: rgb(34 29 51 / 26%); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+.studio-app-shell .studio-settings-panel {
+  top: var(--bc-gap); right: var(--bc-gap); bottom: var(--bc-gap);
+  width: min(720px, calc(100vw - 24px));
+  border: 1px solid var(--bc-line-2); border-radius: 20px;
+  color: var(--bc-ink);
+  background: var(--bc-surface);
+  box-shadow: var(--bc-shadow-pop);
+}
+.studio-app-shell .studio-settings-header {
+  min-height: 78px; padding: 18px 22px;
+  border-bottom: 1px solid var(--bc-line);
+  background: linear-gradient(110deg, #fcf3f7 0%, #f6f3fd 55%, #ffffff 100%);
+}
+.studio-app-shell .studio-settings-header span { color: var(--bc-ink-3); font-size: 11px; font-weight: 500; letter-spacing: .04em; text-transform: none; }
+.studio-app-shell .studio-settings-header strong { color: var(--bc-ink); font-family: var(--bc-serif); font-size: 22px; font-weight: 700; letter-spacing: .06em; }
+.studio-app-shell .studio-settings-tabs {
+  gap: 4px; padding: 12px 44px 12px 18px;
+  border-bottom: 1px solid var(--bc-line);
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
+}
+.studio-app-shell .studio-settings-tabs button {
+  min-height: 30px; padding: 0 12px;
+  border: 1px solid transparent; border-radius: 999px;
+  color: var(--bc-ink-2); background: transparent;
+  font-size: 12px; font-weight: 500;
+}
+.studio-app-shell .studio-settings-tabs button:hover { color: var(--bc-ink); border-color: transparent; background: var(--bc-hover); transform: none; }
+.studio-app-shell .studio-settings-tabs button.active { color: var(--bc-accent); border-color: var(--bc-accent-line); background: var(--bc-accent-soft); font-weight: 600; }
+.studio-app-shell .studio-settings-section { padding: 20px 22px; gap: 16px 18px; }
+.studio-app-shell .studio-settings-section label { color: var(--bc-ink-2); }
+.studio-app-shell .studio-settings-section label > span { color: var(--bc-ink-2); font-size: 12px; font-weight: 500; }
+.studio-app-shell .studio-settings-section :is(input:not([type='checkbox']), select, textarea) { padding: 9px 12px; }
+.studio-app-shell .studio-settings-note { color: var(--bc-ink-3); font-size: 12px; }
+.studio-app-shell .studio-settings-actions { padding: 14px 22px; border-top: 1px solid var(--bc-line); background: var(--bc-surface); }
+.studio-app-shell .studio-settings-status { color: var(--bc-ink-2); }
+.studio-app-shell .studio-check-row {
+  min-height: 40px;
+  border: 1px solid var(--bc-line-2); border-radius: 10px;
+  color: var(--bc-ink); background: var(--bc-surface);
+}
+.studio-app-shell .studio-check-row:has(input:checked) { border-color: var(--bc-accent-line); background: #fef7fa; }
+.studio-app-shell .studio-check-row span { color: var(--bc-ink); font-weight: 500; }
+
+.studio-app-shell .studio-icon-btn,
+.studio-app-shell .studio-secondary-btn {
+  border: 1px solid var(--bc-line-2);
+  color: var(--bc-ink-2); background: var(--bc-surface);
+  box-shadow: none;
+  font-weight: 500;
+}
+.studio-app-shell .studio-icon-btn:hover,
+.studio-app-shell .studio-secondary-btn:hover:not(:disabled) { color: var(--bc-ink); border-color: var(--bc-line-3); background: var(--bc-well); transform: none; }
+.studio-app-shell .studio-primary-btn {
+  border: 0;
+  color: #fff;
+  background: var(--bc-cta);
+  box-shadow: 0 8px 20px -10px rgb(184 67 111 / 70%), inset 0 1px 0 rgb(255 255 255 / 18%);
+  font-weight: 600;
+}
+.studio-app-shell .studio-primary-btn * { color: inherit; }
+.studio-app-shell .studio-primary-btn:hover:not(:disabled) { border-color: transparent; background: var(--bc-cta); filter: brightness(1.06); transform: none; }
+.studio-app-shell :is(.studio-primary-btn, .studio-secondary-btn, .studio-icon-btn):disabled { opacity: .45; cursor: not-allowed; filter: none; }
+
+.studio-app-shell .studio-persona-intro { border: 1px solid rgb(184 67 111 / 16%); color: var(--bc-accent); background: #fdf5f8; }
+.studio-app-shell .studio-persona-intro strong { color: var(--bc-ink); }
+.studio-app-shell .studio-persona-intro p { color: var(--bc-ink-2); }
+.studio-app-shell :is(.studio-memory-block, .studio-memory-note, .studio-memory-results, .studio-memory-status-card, .studio-memory-advanced, .studio-memory-selected) {
+  border-color: var(--bc-line); color: var(--bc-ink); background: var(--bc-well);
+}
+.studio-app-shell .studio-memory-status-card span { color: var(--bc-ink-3); }
+.studio-app-shell .studio-memory-status-card strong { color: var(--bc-ink); }
+.studio-app-shell .studio-memory-status-card .ts-icon { color: var(--bc-accent); }
+
+/* ───────────── Workspace pages: danmaku / music / Minecraft ───────────── */
+/* The legacy pages draw 60%-ink outlines around every card; soften them to hairlines. */
+.studio-app-shell :is(.studio-music-song, .studio-music-now, .studio-music-status-grid div, .studio-music-log article, .studio-danmaku-status, .studio-danmaku-card textarea, .studio-danmaku-message, .studio-danmaku-empty, .studio-memory-block, .studio-memory-results, .studio-memory-note, .studio-memory-advanced, .studio-memory-status-card, .studio-memory-empty, .studio-memory-stats span, .studio-memory-tags span, .studio-memory-note em, .studio-memory-selected span) { border-color: var(--bc-line-2); }
+.studio-app-shell .yachiyo-music-tool-status { color: var(--bc-ok); border-color: rgb(29 140 102 / 22%); background: var(--bc-ok-soft); }
+.studio-app-shell .minecraft-page .players > span { color: var(--bc-ink-3) !important; }
+.studio-app-shell .minecraft-page .minecraft-card > p { color: var(--bc-ink-2) !important; }
+
+.studio-app-shell .studio-music-page {
+  top: var(--bc-top); bottom: var(--bc-gap);
+  left: calc(var(--studio-nav-width) + var(--bc-gap) * 2); right: var(--bc-gap);
+  padding: 0;
+  border-radius: 0;
+  color: var(--bc-ink);
+  background: transparent;
+}
+.studio-app-shell .studio-music-toolbar {
+  min-height: 72px; padding: 14px 18px;
+  border: 1px solid var(--bc-line); border-radius: var(--bc-r-l);
+  color: var(--bc-ink); background: var(--bc-surface);
+  box-shadow: var(--bc-shadow);
+}
+.studio-app-shell .studio-music-toolbar header span { color: var(--bc-ink-3); font-size: 11px; font-weight: 500; letter-spacing: .04em; text-transform: none; }
+.studio-app-shell .studio-music-toolbar header strong { color: var(--bc-ink); font-family: var(--bc-serif); font-size: 20px; font-weight: 700; letter-spacing: .05em; }
+.studio-app-shell .studio-music-card {
+  padding: 18px;
+  border: 1px solid var(--bc-line); border-radius: var(--bc-r-l);
+  color: var(--bc-ink); background: var(--bc-surface);
+  box-shadow: var(--bc-shadow);
+}
+.studio-app-shell .studio-music-card header, .studio-app-shell .studio-music-card h2 { color: var(--bc-ink); }
+.studio-app-shell .studio-music-card header svg { color: var(--bc-accent); }
+.studio-app-shell .studio-music-card h2 { font-size: 14px; font-weight: 600; letter-spacing: .02em; text-transform: none; }
+.studio-app-shell .studio-music-card label > span { color: var(--bc-ink-2); font-size: 12px; font-weight: 500; }
+
+.studio-app-shell .minecraft-page {
+  top: var(--bc-top) !important; bottom: var(--bc-gap) !important;
+  left: calc(var(--studio-nav-width) + var(--bc-gap) * 2) !important; right: var(--bc-gap) !important;
+  padding: 22px !important;
+  border: 1px solid var(--bc-line); border-radius: var(--bc-r-l);
+  color: var(--bc-ink) !important; background: var(--bc-surface) !important;
+  box-shadow: var(--bc-shadow);
+}
+.studio-app-shell .minecraft-card { color: var(--bc-ink) !important; background: var(--bc-well) !important; border-color: var(--bc-line) !important; box-shadow: none !important; }
+.studio-app-shell .minecraft-card :is(input, select, textarea),
+.studio-app-shell .minecraft-page .phase-pill,
+.studio-app-shell .minecraft-page .stat-grid div,
+.studio-app-shell .minecraft-page .chips span { color: var(--bc-ink) !important; background: var(--bc-surface) !important; border-color: var(--bc-line-2) !important; }
+.studio-app-shell .minecraft-card button { color: var(--bc-ink-2) !important; background: var(--bc-surface) !important; border-color: var(--bc-line-2) !important; }
+.studio-app-shell .minecraft-card button.primary { color: #fff !important; background: var(--bc-cta) !important; border-color: transparent !important; }
+.studio-app-shell .minecraft-page .minecraft-kicker { color: var(--bc-accent) !important; letter-spacing: .04em; text-transform: none; }
+.studio-app-shell .minecraft-page .autonomy-strip, .studio-app-shell .minecraft-page .login-code { color: var(--bc-ink-2) !important; background: var(--bc-ok-soft) !important; }
+.studio-app-shell .minecraft-page .autonomy-strip strong, .studio-app-shell .minecraft-page .login-code a { color: var(--bc-ok) !important; }
+.studio-app-shell .minecraft-page :is(.minecraft-header p, .field-grid span, .trust-row, .goal-field span, .autonomy-strip span, .autonomy-strip em, .stat-grid span) { color: var(--bc-ink-2) !important; }
+
+/* ───────────── Responsive ───────────── */
+@media (max-width: 1100px) {
+  :root { --studio-nav-width: 132px; --studio-control-width: 312px; }
+  .studio-app-shell .live2d-control-panel { padding: 12px; gap: 10px; }
+  .studio-app-shell .studio-rail-item { padding: 0 9px; gap: 9px; font-size: 12px; }
+  .studio-app-shell .studio-rail-avatar strong { font-size: 12px; }
+  .studio-app-shell .studio-rail-avatar em { display: none; }
+  .studio-app-shell .live2d-scene-switcher button { padding: 0 9px; }
+}
+@media (max-width: 880px) {
+  .studio-app-shell .live2d-scene-switcher button span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .studio-app-shell .live2d-scene-switcher button { padding: 0 10px; }
+  .studio-app-shell .studio-season-heading { padding-left: 12px; margin-left: 0; }
+}
+@media (max-width: 760px) {
+  :root { --studio-nav-width: 56px; --bc-top: 66px; }
+  .studio-app-shell, .studio-app-shell.is-workspace-collapsed { --studio-nav-width: 56px; }
+  .studio-app-shell .studio-masthead { height: 56px; padding: 0 10px; gap: 10px; }
+  .studio-app-shell .studio-scene-label { display: none !important; }
+  .studio-app-shell .studio-season-heading { display: flex; border: 0; padding: 0; }
+  .studio-app-shell .studio-left-rail { top: var(--bc-top); left: 8px; bottom: 8px; padding: 6px; }
+  .studio-app-shell .studio-rail-item.active::before { left: -6px; }
+  .studio-app-shell .live2d-stage { top: var(--bc-top); left: 76px; right: 8px; bottom: 47%; }
+  .studio-app-shell .live2d-control-panel { top: 55%; bottom: 8px; left: 76px; right: 8px; width: auto; display: flex; flex-direction: column; overflow: auto; }
+  .studio-app-shell .live2d-control-panel > * { flex: 0 0 auto; }
+  .studio-app-shell .live2d-caption { --cap-size: 14px; }
+  .studio-app-shell .live2d-caption-head > span { font-size: 13px; }
+  .studio-app-shell .studio-settings-panel { top: 8px; bottom: 8px; right: 8px; width: calc(100vw - 16px); }
+  .studio-app-shell .studio-music-page, .studio-app-shell .minecraft-page { top: var(--bc-top) !important; left: 76px !important; right: 8px !important; }
+  .studio-app-shell .live2d-item-editor, .studio-app-shell .live2d-debug-panel { top: 55%; left: 76px; right: 8px; width: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .studio-app-shell .studio-onair i,
+  .studio-app-shell .live2d-stage-dot,
+  .studio-app-shell .live2d-status-orb::after,
+  .studio-app-shell .live2d-caption::before { animation: none !important; }
+}
