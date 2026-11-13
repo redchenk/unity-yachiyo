@@ -69,3 +69,22 @@ Reproduce the lightweight release performance capture (writes JSON/PNG, then exi
 ```
 
 `--profile-action sample` also plays the bundled motion during the capture. Native geometry equivalence: `--verify-preserved-hems /absolute/output/prefix`. Playback regression: `node director/tools/desktop/verify-streamtalk.mjs /absolute/path/spoken.wav`. Profiling is opt-in and does not record in normal use. Timing counters follow [Unity's release-player ProfilerRecorder guidance](https://docs.unity.com/en-us/engine/6000.6/manual/analysis/graphics-performance-profiling/profile-rendering/frame-timing-manager/record-timing-data).
+
+## Natural idle and direct action transitions — 2026-11-13
+
+- Replaced the shared periodic idle with asymmetric weight transfer, planted feet, variable breath duration, delayed torso-to-arm response, independent wrist/finger drift, irregular fast-close/slow-open blinks and eye-led attention. These are local physiological details; semantic actions still require AI instructions or generated motion. No thinking head-tilt preset was restored. The earlier strict no-head-motion check is superseded by the user's request for subtle attention: quiet head/neck movement is bounded and head roll remains prohibited.
+- New clips join the currently rendered pose using bounded outgoing velocity and a quintic transition. Queued speech explicitly carries continuation intent while retaining fresh utterance identities. Waiting for the next inference retains the outgoing pose; an absent/failed successor eventually settles. Cancel still drops stale audio/motion and begins settling immediately. A stable stance origin prevents repeated idle/action cycles from accumulating pelvis sway as locomotion.
+- The native 32-second idle capture ran at approximately 60 FPS, with 3.31 cm of pelvis travel, irregular blinks and multiple independent attention changes. Planted-foot drift was below 1 mm. A recorded-pose A → hold → pose B diagnostic saw zero intermediate idle frames; maximum per-frame joint/root steps were below 2 degrees / 4 mm. Three repeated held/clip/idle cycles retained the stance within 1 mm. These are measured continuity checks, not subjective human-like acceptance.
+- Real Windows RTX 3070 StreamTalk inference → WKWebView audio → Unity passed for three speech jobs, including a queued transition. The continuation interval reported `joining` and zero idle frames; media-clock interpolation, pause, resume, completion and explicit interruption passed. Only TTS was replaced by an actual prerecorded voice WAV; no new live TTS/provider voice-quality claim is made.
+- Seven performance-plan scenarios retained intended expressions and explicit cues; quiet speech produced no implicit semantic arm gestures or thinking tilt. Camera button/slider/lock/reset/zoom checks passed. Idle camera tracking now uses the planted stance instead of cancelling pelvis sway. Diagnostic profiles do not overwrite saved framing.
+- The existing cloth topology, shoulder/sleeve attachment and solver settings remain unchanged. Preserved-hem regression covered standing, waving, return, turn, model motion, settling and disable/re-enable; all samples were finite, visible seam gap was zero, and maximum seam-skinning deviation was 7.01e-7 metres. Front/back/side captures were inspected. This does not claim every possible pose is free of garment intersections.
+- Frontend and Unity release builds and installed deep/strict signature verification passed. Director tests: 51 passed, 1 external NSIS fixture skipped. Local evidence is under ignored `artifacts/natural-idle/`, `artifacts/streamtalk-native/` and the existing performance/conversation verification directories. No private model data or settings are published.
+
+Reproduce the native idle, transition and stance-drift diagnostic (writes JSON/PNG, then exits):
+
+```sh
+"$HOME/Applications/Yachiyo Motion Studio.app/Contents/MacOS/Yachiyo Motion Studio" \
+  --no-auto-connect --verify-natural-motion /absolute/output/prefix
+```
+
+The real-inference queued-speech regression uses `node director/tools/desktop/verify-streamtalk.mjs /absolute/path/spoken.wav`. It requires the running GPU service and the built private Mac application.

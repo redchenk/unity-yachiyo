@@ -33,7 +33,7 @@ namespace Yachiyo {
    public string type,kind,sessionId,commandId,turnId,utteranceId,state,reason;public int epoch;public long seq;public Payload payload;
   }
   [Serializable]public class Payload {
-   public MotionClip motion;public bool neuralMotion;
+   public MotionClip motion;public bool neuralMotion,continueMotion;
    public PerformancePlan performance;
    public string emotion,mode,interruptPolicy,@event,source,bodyMode,action,text;public float intensity,durationMs,holdMs,value,a,i,u,e,o;public int priority,audioTimeMs;public bool silence;public Behavior[] actions;
   }
@@ -101,6 +101,7 @@ namespace Yachiyo {
    UpdatePerformanceGaze();
    if(execution==null&&performances.Count>0){active=performances.Dequeue();execution=StartCoroutine(Execute(active,generation));}
   }
+  public bool AwaitingContinuation {get;private set;}
   void Handle(Message msg){
    if(msg.type!="command")return;
    if(msg.kind=="cancel"){
@@ -141,10 +142,12 @@ namespace Yachiyo {
      if(active==null&&speechPlan==null){if(!string.IsNullOrEmpty(p.emotion))Emotion(p.emotion,.65f,p.holdMs);else if(p.mode=="idle"||p.mode=="listening"){RestoreAffect();emotionUntil=0;}}
      break;
     case "audio":
+     if(p.@event=="start")AwaitingContinuation=false;
+     else if(msg.utteranceId==utterance&&p.@event!="pause"&&p.@event!="resume")AwaitingContinuation=p.@event=="end"&&p.continueMotion;
      Debug.Log("DIRECTOR_AUDIO "+p.@event+" seq="+msg.seq+" current="+(msg.utteranceId==utterance));
      if(p.@event=="start"&&!string.IsNullOrEmpty(msg.utteranceId)){utterance=msg.utteranceId;mouthClock=-1;face.CloseAudioMouth();avatar.SpeechAudio(p.source=="speech");if(p.source=="speech"){if(p.neuralMotion){CancelPerformances("neural-speech");ui.StopMotion(true);avatar.BeginSpeechMotion();}avatar.SetCharacterState("speaking",p.emotion,15000);StartPerformance(p.performance);}}
      else if(msg.utteranceId==utterance&&(p.@event=="pause"||p.@event=="resume")){face.CloseAudioMouth();avatar.SpeechAudio(p.@event=="resume");avatar.SpeechFrame(p.audioTimeMs/1000f,0);}
-     else if(msg.utteranceId==utterance){CancelSpeechPerformances(utterance);utterance="";face.CloseAudioMouth();avatar.SpeechAudio(false);avatar.EndSpeechMotion();EndPerformance();}
+     else if(msg.utteranceId==utterance){CancelSpeechPerformances(utterance);utterance="";face.CloseAudioMouth();avatar.SpeechAudio(false);avatar.EndSpeechMotion(p.continueMotion);EndPerformance();}
      break;
     case "motion":
      if(string.IsNullOrEmpty(utterance)||msg.utteranceId!=utterance||p.motion==null)return;
@@ -165,10 +168,10 @@ namespace Yachiyo {
     if(version!=generation)yield break;
     bool remote=IsRemote(action.type,p.bodyMode);
     if(remote){
-     ui.StopMotion(true);string prompt=action.type=="walk"?"A person walks forward slowly.":action.type=="clap"?"A person claps their hands.":action.type=="dance"?"A person dances gently in place.":action.type=="bow"?"A person bows politely.":action.type=="turn"?"A person turns around once in place.":"A person waves hello with their right hand.";
+     ui.PrepareNextMotion();int revision=avatar.MotionRevision;string prompt=action.type=="walk"?"A person walks forward slowly.":action.type=="clap"?"A person claps their hands.":action.type=="dance"?"A person dances gently in place.":action.type=="bow"?"A person bows politely.":action.type=="turn"?"A person turns around once in place.":"A person waves hello with their right hand.";
      ui.RequestMotion(prompt);float deadline=Time.unscaledTime+45;
-     while(!avatar.Playing&&Time.unscaledTime<deadline){if(version!=generation)yield break;yield return null;if(!ui.MotionRequestBusy&&!avatar.Playing)break;}
-     if(!avatar.Playing){string reason=ui.MotionStatus;ui.StopMotion(true);Receipt(msg,"failed","Motion service did not start: "+reason);Finish();yield break;}
+     while(avatar.MotionRevision==revision&&Time.unscaledTime<deadline){if(version!=generation)yield break;yield return null;if(!ui.MotionRequestBusy&&avatar.MotionRevision==revision)break;}
+     if(avatar.MotionRevision==revision){string reason=ui.MotionStatus;ui.StopMotion(true);Receipt(msg,"failed","Motion service did not start: "+reason);Finish();yield break;}
      if(!started){Receipt(msg,"started");started=true;}
      body=true;began=Time.unscaledTime;
     }else switch(action.type){
@@ -184,7 +187,7 @@ namespace Yachiyo {
     }
    }
    while(Time.unscaledTime-began<duration){if(version!=generation)yield break;yield return null;}
-   if(body)ui.StopMotion(true);
+   if(body)ui.FinishMotion(performances.Count>0);
    Receipt(msg,"completed");Finish();
   }
   void Finish(){active=null;execution=null;}
@@ -223,7 +226,7 @@ namespace Yachiyo {
    if(avatar)avatar.EndConversationGesture();
    if(ui&&avatar)ui.StopMotion(true);
   }
-  void Clear(string reason){CancelPerformances(reason);if(avatar)avatar.ResetConversation();utterance="";mouthClock=-1;seen.Clear();emotionUntil=0;gazeUntil=0;if(face){face.CloseAudioMouth();EndPerformance();face.SetLookTarget(null);}}
+  void Clear(string reason){AwaitingContinuation=false;CancelPerformances(reason);if(avatar)avatar.ResetConversation();utterance="";mouthClock=-1;seen.Clear();emotionUntil=0;gazeUntil=0;if(face){face.CloseAudioMouth();EndPerformance();face.SetLookTarget(null);}}
   void OnDestroy(){if(ui)ui.LocalStopRequested-=LocalStop;lifetime?.Cancel();Clear("destroyed");if(gaze)Destroy(gaze.gameObject);}
   void OnGUI(){
    if(!font)return;float scale=Mathf.Min(Screen.width/1280f,Screen.height/800f);var old=GUI.matrix;GUI.matrix=Matrix4x4.Scale(new Vector3(scale,scale,1));

@@ -21,6 +21,7 @@ namespace Yachiyo {
   public float LastGenerationSeconds {get;private set;}
   float yaw=0, pitch=8, distance=3.4f;
   Vector3 cameraOffset=new Vector3(0,.85f,0),previousPointer;
+  Vector3 followedRoot,followVelocity;bool followReady;
   Vector2 framing;float cameraSaveAt;bool cameraDirty;
   public Vector2 DirectorFraming=>framing;
   public float DirectorCameraDistance=>distance;
@@ -69,8 +70,12 @@ namespace Yachiyo {
   }
   void LateUpdate(){
    // Positive pitch raises the camera; rotating +Z with positive Euler X lowers it.
-   var hips=avatar.animator.GetBoneTransform(HumanBodyBones.Hips);
-   var target=new Vector3(hips.position.x,0,hips.position.z)+cameraOffset;
+   // Keep idle's foot support frame still: following every pelvis sway would
+   // visually cancel the weight shift and make the planted feet appear to slide.
+   var root=avatar.CameraAnchor;root.y=0;
+   if(!followReady){followedRoot=root;followReady=true;}
+   followedRoot=Vector3.SmoothDamp(followedRoot,root,ref followVelocity,.22f);
+   var target=followedRoot+cameraOffset;
    view.transform.position=target+Quaternion.Euler(-pitch,yaw,0)*new Vector3(0,0,distance);
    view.transform.LookAt(target);view.rect=UnifiedDirectorHost.IsBundled?UnifiedDirectorHost.StageViewport:new Rect(.34f,.085f,.66f,.81f);
    float height=2*distance*Mathf.Tan(view.fieldOfView*Mathf.Deg2Rad*.5f);
@@ -206,7 +211,7 @@ namespace Yachiyo {
   }
   void SaveCamera(){
    // Verification profiles never write the user's framing preferences.
-   if(Array.IndexOf(Environment.GetCommandLineArgs(),"--verify-director")>=0){cameraDirty=false;return;}
+   if(Array.Exists(Environment.GetCommandLineArgs(),a=>a.StartsWith("--verify-",StringComparison.Ordinal))){cameraDirty=false;return;}
    PlayerPrefs.SetFloat("yachiyo.camera.x",framing.x);PlayerPrefs.SetFloat("yachiyo.camera.y",framing.y);PlayerPrefs.SetFloat("yachiyo.camera.yaw",yaw);PlayerPrefs.SetFloat("yachiyo.camera.pitch",pitch);PlayerPrefs.SetFloat("yachiyo.camera.distance",distance);PlayerPrefs.Save();cameraDirty=false;
   }
   void OnApplicationQuit(){if(cameraDirty)SaveCamera();}
@@ -219,6 +224,8 @@ namespace Yachiyo {
   public bool MotionRequestBusy=>busy;
   public string MotionStatus=>status;
   public void StopMotion(bool fromDirector=false){if(!fromDirector)LocalStopRequested?.Invoke();CloseStream();requestVersion++;busy=false;avatar.Act("idle","待机");status="已停止，正在等你。";}
+  public void PrepareNextMotion(){CloseStream();requestVersion++;busy=false;avatar.HoldForNextMotion(15);}
+  public void FinishMotion(bool continuation){CloseStream();requestVersion++;busy=false;avatar.HoldForNextMotion(continuation?12:.65f);}
   void PlaySample(){CloseStream();requestVersion++;busy=false;try{var clip=JsonUtility.FromJson<MotionClip>(File.ReadAllText(Path.Combine(Application.streamingAssetsPath,"Motions","kimodo-official.json")));avatar.Play(clip,"官方动作样例");status="正在播放官方随仓库提供的动作，非本次生成。";}catch(Exception e){status="样例加载失败："+e.Message;}}
   public void RequestMotion(string text){prompt=text;SendPrompt();}
   void SendPrompt(){if(string.IsNullOrWhiteSpace(prompt))return;string s=prompt.Trim();if(s=="停止"){StopMotion();return;}
@@ -278,6 +285,6 @@ namespace Yachiyo {
    using(var req=UnityWebRequest.Get(endpoint+"/jobs/"+job.id+"/motion")){req.timeout=30;yield return req.SendWebRequest();if(version!=requestVersion)yield break;if(req.result!=UnityWebRequest.Result.Success){Fail("动作下载失败。",version);yield break;}
     try{var clip=JsonUtility.FromJson<MotionClip>(req.downloadHandler.text);if(job.cached)clip.source+=" · 缓存";avatar.Play(clip,text);status="动作已就绪"+(job.cached?"（缓存）":"")+"。";busy=false;}catch(Exception e){Fail("动作数据无效："+e.Message,version);}}
   }
-  void Fail(string message,int version){if(version!=requestVersion)return;busy=false;status=message;}
+  void Fail(string message,int version){if(version!=requestVersion)return;busy=false;status=message;if(avatar.HoldingMotion)avatar.Act("idle","待机");}
  }
 }

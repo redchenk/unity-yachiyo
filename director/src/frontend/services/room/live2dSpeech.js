@@ -520,11 +520,11 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     item.reject(error);
   }
 
-  function clearCurrentAudio() {
+  function clearCurrentAudio(continueMotion = false) {
     stopMouth();
     if (currentAudio) {
       const audio = currentAudio;
-      window.TSUKUYOMI_AVATAR_DRIVER?.audioEnd(audio);
+      window.TSUKUYOMI_AVATAR_DRIVER?.audioEnd(audio, 'end', { continueMotion });
       currentAudio.pause();
       audio.onplay = null;
       audio.onplaying = null;
@@ -951,7 +951,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
           })
           .catch(fail);
       });
-      if (currentAudio === audio) clearCurrentAudio();
+      if (currentAudio === audio) clearCurrentAudio(speechQueue.some(item => !item.cancelled && !isQueueItemExpired(item)));
       return true;
     } catch (error) {
       if (audio && currentAudio !== audio) releaseAudio(audio);

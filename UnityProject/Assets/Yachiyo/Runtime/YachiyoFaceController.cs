@@ -17,10 +17,15 @@ namespace Yachiyo {
   readonly Dictionary<string,float> current=new Dictionary<string,float>(),target=new Dictionary<string,float>();
   readonly HashSet<string> managed=new HashSet<string>();
   FaceEmotion emotion=FaceEmotion.Neutral;float intensity=1,fade=.22f;
-  float blinkTimer=3,blinkClock=-1,forceBlink=-1;
+  float blinkTimer=3,blinkClock=-1,forceBlink=-1,activeBlinkDuration=.18f;bool doubleBlink;
   bool talking;float talkClock;string viseme=null;float visemeWeight;
   bool externalMouth;float mouthExpires,openAmount;readonly float[] vowels=new float[5];
-  Transform leftEye,rightEye,lookTarget;
+  Transform leftEye,rightEye,lookTarget,head;
+  Quaternion leftEyeRest,rightEyeRest;Vector3 headForward,headRight,headUp;
+  float lookYaw,lookPitch,microYaw,microPitch;
+  public int BlinkCount {get;private set;}
+  public float BlinkWeight {get;private set;}
+  public Vector2 EyeMicroOffset=>new Vector2(microYaw,microPitch);
   bool ready;
 
   static readonly Dictionary<FaceEmotion,(string,float)[]> Presets=new Dictionary<FaceEmotion,(string,float)[]>{
@@ -71,7 +76,7 @@ namespace Yachiyo {
    foreach(var n in new[]{"_101_FC_eye_close_left","_101_FC_eye_close_right","_101_EL_eye_close_left","_101_EL_eye_close_right","JawOpen","MouthClosed"})managed.Add(n);
    foreach(var n in Visemes.Values)managed.Add(n);
    foreach(var n in managed)current[n]=0f;
-   if(avatar&&avatar.animator){leftEye=avatar.animator.GetBoneTransform(HumanBodyBones.LeftEye);rightEye=avatar.animator.GetBoneTransform(HumanBodyBones.RightEye);}
+   if(avatar&&avatar.animator){avatar.Initialize();leftEye=avatar.animator.GetBoneTransform(HumanBodyBones.LeftEye);rightEye=avatar.animator.GetBoneTransform(HumanBodyBones.RightEye);head=avatar.animator.GetBoneTransform(HumanBodyBones.Head);leftEyeRest=avatar.RestBoneRotation(HumanBodyBones.LeftEye);rightEyeRest=avatar.RestBoneRotation(HumanBodyBones.RightEye);headForward=head.InverseTransformDirection(avatar.transform.forward);headRight=head.InverseTransformDirection(avatar.transform.right);headUp=head.InverseTransformDirection(avatar.transform.up);}
    blinkTimer=UnityEngine.Random.Range(blinkIntervalMin,blinkIntervalMax);ready=true;
    var names=new List<string>(shapes.Keys);names.Sort();
    Debug.Log("FACE_CONTROLLER renderers="+renderers.Count+" shapes="+shapes.Count+" managed="+managed.Count+" smile="+HasShape("_209_FC_mouth_smile")+" blink="+HasShape("_101_FC_eye_close_left")+" jaw="+HasShape("JawOpen"));
@@ -100,11 +105,14 @@ namespace Yachiyo {
    if(Presets.TryGetValue(emotion,out var preset))foreach(var pair in preset)Add(pair.Item1,pair.Item2*intensity);
    // Auto blink plus one-shot forced blink.
    blinkTimer-=dt;
-   if(forceBlink>0){blinkClock=0;forceBlink=-1;}
-   if(blinkClock<0&&blinkTimer<=0){blinkClock=0;blinkTimer=UnityEngine.Random.Range(blinkIntervalMin,blinkIntervalMax);}
+   if(forceBlink>0){blinkClock=0;activeBlinkDuration=forceBlink;forceBlink=-1;BlinkCount++;}
+   if(blinkClock<0&&blinkTimer<=0){blinkClock=0;activeBlinkDuration=UnityEngine.Random.Range(.16f,.20f);BlinkCount++;}
    float blink=0f;
-   if(blinkClock>=0){blinkClock+=dt;blink=Mathf.Sin(Mathf.Clamp01(blinkClock/blinkDuration)*Mathf.PI)*100f;if(blinkClock>=blinkDuration)blinkClock=-1;}
+   if(blinkClock>=0){blinkClock+=dt;float t=blinkClock/activeBlinkDuration;blink=(t<.28f?Mathf.SmoothStep(0,1,t/.28f):1-Mathf.SmoothStep(0,1,(t-.28f)/.72f))*100;
+    if(t>=1){blinkClock=-1;bool again=!doubleBlink&&UnityEngine.Random.value<.16f;blinkTimer=again?UnityEngine.Random.Range(.10f,.18f):UnityEngine.Random.Range(blinkIntervalMin*.65f,blinkIntervalMax*1.3f);doubleBlink=again;}}
+   BlinkWeight=blink;
    if(blink>0){Add("_101_FC_eye_close_left",blink);Add("_101_FC_eye_close_right",blink);Add("_101_EL_eye_close_left",blink);Add("_101_EL_eye_close_right",blink);}
+   if(blink>0){Add("_304_FC_eyebrow_down",blink*.025f);Add("_304_EB_eyebrow_down",blink*.025f);}
    // Procedural talking. A viseme, when supplied by a future audio/TTS layer,
    // takes priority and can be blended over the generic open/close motion.
    if(externalMouth){
@@ -125,22 +133,21 @@ namespace Yachiyo {
    float step=dt/Mathf.Max(.001f,fade)*100f;
    foreach(string name in managed){
     float goal=target.TryGetValue(name,out var g)?Mathf.Clamp(g,0f,100f):0f;
-    float now=Mathf.MoveTowards(current.TryGetValue(name,out var c)?c:0f,goal,step);
+    float now=name.StartsWith("_101_")?goal:Mathf.MoveTowards(current.TryGetValue(name,out var c)?c:0f,goal,step);
     current[name]=now;
     if(shapes.TryGetValue(name,out var list))foreach(var pair in list)pair.renderer.SetBlendShapeWeight(pair.index,now);
    }
-   // Optional eye look: rotate the eye bones toward a target without moving the head.
-   if(lookTarget&&leftEye&&rightEye){
-    var head=avatar?avatar.animator.GetBoneTransform(HumanBodyBones.Head):null;
-    if(head){
-     Vector3 local=Quaternion.Inverse(head.rotation)*(lookTarget.position-head.position);
-     float yaw=Mathf.Clamp(Mathf.Atan2(local.x,local.z)*Mathf.Rad2Deg,-28f,28f);
-     float pitch=Mathf.Clamp(-Mathf.Asin(Mathf.Clamp(local.normalized.y,-1f,1f))*Mathf.Rad2Deg,-18f,18f);
-     Vector3 e=new Vector3(pitch,yaw,0);
-     leftEye.localRotation=Quaternion.Slerp(leftEye.localRotation,Quaternion.Euler(e),Mathf.Clamp01(dt*10f));
-     rightEye.localRotation=Quaternion.Slerp(rightEye.localRotation,Quaternion.Euler(e),Mathf.Clamp01(dt*10f));
-    }
-   }
+   ApplyEyeAttention(dt);
+  }
+  void ApplyEyeAttention(float dt){
+   if(!head||!leftEye||!rightEye)return;
+   var forward=head.TransformDirection(headForward);var right=head.TransformDirection(headRight);var up=head.TransformDirection(headUp);float yaw=0,pitch=0;
+   if(lookTarget){var d=(lookTarget.position-head.position).normalized;yaw=Mathf.Clamp(Mathf.Atan2(Vector3.Dot(d,right),Vector3.Dot(d,forward))*Mathf.Rad2Deg,-24,24);pitch=Mathf.Clamp(-Mathf.Asin(Mathf.Clamp(Vector3.Dot(d,up),-1,1))*Mathf.Rad2Deg,-15,15);}
+   lookYaw=Mathf.Lerp(lookYaw,yaw,1-Mathf.Exp(-dt*12));lookPitch=Mathf.Lerp(lookPitch,pitch,1-Mathf.Exp(-dt*12));
+   float gain=avatar.PoseMode=="idle"?1:.35f;
+   microYaw=Mathf.MoveTowards(microYaw,avatar.IdleGazeYaw*gain,dt*180);microPitch=Mathf.MoveTowards(microPitch,avatar.IdleGazePitch*gain,dt*140);
+   var offset=Quaternion.AngleAxis(lookYaw+microYaw,up)*Quaternion.AngleAxis(lookPitch+microPitch,right);
+   leftEye.rotation=offset*leftEye.parent.rotation*leftEyeRest;rightEye.rotation=offset*rightEye.parent.rotation*rightEyeRest;
   }
   void Add(string name,float weight){
    if(!managed.Contains(name))managed.Add(name);

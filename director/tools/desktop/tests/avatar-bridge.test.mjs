@@ -89,6 +89,27 @@ test('Unity semantic prompt advertises connected conversational gestures only', 
   } finally { if (previous === undefined) delete globalThis.window; else globalThis.window = previous; }
 });
 
+test('queued speech carries continuity only across normal completion, with fresh utterance identity', async t => {
+  const { url, messages } = await fixture(t); let status;
+  const driver = createUnityAvatarDriver({ url: `${url}?role=director`, WebSocketClass: WebSocket, events: new EventTarget(), onStatus: s => status = s });
+  t.after(() => driver.dispose()); await until(() => status?.ready);
+  const first = { currentTime: 1.8 }, second = { currentTime: 0 };
+  driver.audioStart(first, { neuralMotion: true });
+  driver.audioEnd(first, 'end', { continueMotion: true });
+  driver.audioStart(second, { neuralMotion: true });
+  driver.audioEnd(second, 'pause', { continueMotion: true });
+  await until(() => messages.filter(m => m.kind === 'audio').length === 4);
+  const audio = messages.filter(m => m.kind === 'audio');
+  assert.equal(audio[1].payload.continueMotion, true);
+  assert.equal(audio[3].payload.continueMotion, false);
+  assert.notEqual(audio[0].utteranceId, audio[2].utteranceId);
+  assert.equal(audio[0].utteranceId, audio[1].utteranceId);
+  driver.cancel();
+  const count = messages.filter(m => m.kind === 'audio').length;
+  driver.audioEnd(second, 'end', { continueMotion: true }); await delay(30);
+  assert.equal(messages.filter(m => m.kind === 'audio').length, count);
+});
+
 test('foreign origins and duplicate avatar owners cannot access local gateway', async t => {
   const { url } = await fixture(t);
   for (const [options, code] of [[{ origin: 'https://foreign.example' }, 403], [{}, 409]]) {

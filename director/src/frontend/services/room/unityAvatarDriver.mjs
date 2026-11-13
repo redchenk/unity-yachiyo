@@ -66,10 +66,10 @@ export function createUnityAvatarDriver({ url, onStatus = () => {}, onReceipt = 
     if (performance?.emotion) lastEmotion = performance.emotion;
     send('audio', { event: 'start', source, emotion: lastEmotion, performance, neuralMotion, audioTimeMs: Math.round((audio.currentTime || 0) * 1000) }, { turnId: token.turnId, utteranceId: token.id });
   }
-  function audioEnd(audio, event = 'end') {
+  function audioEnd(audio, event = 'end', { continueMotion = false } = {}) {
     const token = audioIds.get(audio);
     if (!token || activeAudio !== token) return;
-    send('audio', { event, source: token.source, audioTimeMs: Math.round((audio.currentTime || 0) * 1000) });
+    send('audio', { event, source: token.source, continueMotion: event === 'end' && continueMotion, audioTimeMs: Math.round((audio.currentTime || 0) * 1000) });
     if(event==='pause'){token.paused=true;return;}
     activeAudio = null;
   }

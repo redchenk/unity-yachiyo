@@ -82,10 +82,13 @@ try {
  fs.writeFileSync(path.join(output, 'phases.json'), JSON.stringify({ phases, result }, null, 2));
  assert(result.passed, result.error);
  const angle=(a,b)=>2*Math.acos(Math.min(1,Math.abs(a.x*b.x+a.y*b.y+a.z*b.z+a.w*b.w)))*180/Math.PI;
+ const roll=q=>Math.atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z))*180/Math.PI;
  for(const name of ['thinking','listening','rejectedTilt','implicitQuiet']){
   assert.equal(phases[name].followPointer,false);
-  assert(angle(phases.idle.headLocal,phases[name].headLocal)<.1, name+' changed head rotation');
-  assert(angle(phases.idle.neckLocal,phases[name].neckLocal)<.1, name+' changed neck rotation');
+  // Natural idle now permits small breathing/attention motion, never a thinking tilt.
+  assert(Math.abs(roll(phases.idle.headLocal)-roll(phases[name].headLocal))<.15,name+' tilted head');
+  assert(angle(phases.idle.headLocal,phases[name].headLocal)<3,name+' exceeded idle head attention');
+  assert(angle(phases.idle.neckLocal,phases[name].neckLocal)<2,name+' exceeded idle neck attention');
   assert.equal(phases[name].cuesFired,0);
  }
  assert.equal(phases.thinking.characterState,'thinking');

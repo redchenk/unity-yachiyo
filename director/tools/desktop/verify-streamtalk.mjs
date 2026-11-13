@@ -44,12 +44,14 @@ try{
  audio.pause();await delay(400);post({phase:'paused0',audioTime:audio.currentTime});await delay(400);post({phase:'paused1',audioTime:audio.currentTime});await delay(220);
  await audio.play();await delay(700);post({phase:'resumed',audioTime:audio.currentTime});await delay(220);
  await play;await delay(650);post({phase:'ended'});await delay(250);
+ const continuation=speech.enqueue('続けて話します。',{sourceLang:'ja'});
  let second=false;const cancelled=speech.enqueue('途中で停止します。',{sourceLang:'ja',onStart:()=>{second=true;}}).catch(e=>e.name);
+ await continuation;await delay(200);post({phase:'joining'});await delay(220);
  await wait(()=>second,'second speech never started');await delay(500);speech.stop();
  if(await cancelled!=='AbortError')throw Error('Cancellation did not reject old speech');
  await delay(650);post({phase:'cancelled'});await delay(250);
  if(result.motionStatuses.some(s=>s.status==='error'))throw Error(JSON.stringify(result.motionStatuses));
- if(result.jobs.length<2||result.jobs.some(j=>!j.id))throw Error('Real inference jobs not observed');
+ if(result.jobs.length<3||result.jobs.some(j=>!j.id))throw Error('Real inference jobs not observed');
  result.passed=true;
 }catch(e){speech?.stop();result.error=String(e.stack||e);}
 post({...result,done:true});
@@ -79,6 +81,9 @@ try{
  assert(Math.abs(phases.paused0.neuralClock-phases.paused1.neuralClock)<.04,'Motion advanced while paused');
  assert(Math.abs(phases.paused0.renderedClock-phases.paused1.renderedClock)<.001,'Interpolated motion advanced while paused');
  assert(phases.resumed.neuralClock>phases.paused1.neuralClock+.3,'Motion did not resume with audio');
+ assert(phases.joining.awaitingContinuation,'Queued speech did not retain continuation intent');
+ assert.equal(phases.joining.poseMode,'joining','Returned to idle while the next utterance was preparing');
+ assert.equal(phases.cancelled.idleDuringContinuationFrames,0,'Queued generated speech passed through idle');
  for(const name of ['ended','cancelled']){assert.equal(phases[name].neuralSpeechMotion,false);assert.equal(phases[name].bodyPlaying,false);assert.equal(phases[name].audioActive,false);}
  console.log('PASS: real StreamTalk inference → WKWebView audio → Unity media-clock body, pause, resume and cancel');
  console.log(path.join(output,'result.json'));
