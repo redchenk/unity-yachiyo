@@ -18,6 +18,11 @@ namespace Yachiyo {
   public int StreamChunks {get;private set;}
   public int StreamUnderruns {get;private set;}
   readonly Queue<MotionClip> streamQueue=new Queue<MotionClip>();
+  public bool NeuralSpeechMotion {get;private set;}
+  public int SpeechMotionFrames {get;private set;}
+  public int SpeechMotionUnderruns {get;private set;}
+  public float SpeechMotionClock=>NeuralSpeechMotion?speechClock:0;
+  float speechChunkStart;bool speechUnderrun;
   public float expression;
   YachiyoFaceController faceController;
   readonly Dictionary<HumanBodyBones,Transform> bones=new Dictionary<HumanBodyBones,Transform>();
@@ -70,6 +75,7 @@ namespace Yachiyo {
   }
   public string CharacterState=>stateMode;
   public void Play(MotionClip motion,string label) {
+   NeuralSpeechMotion=false;
    Streaming=false;streamQueue.Clear();Initialize(); motion.Validate();CaptureTransition();clip=motion;clock=0;CurrentAction=label;MotionSource=motion.source;
    mapping=new HumanBodyBones[motion.bones.Length];for(int i=0;i<mapping.Length;i++) mapping[i]=Enum.TryParse(motion.bones[i],out HumanBodyBones b)?b:HumanBodyBones.LastBone;
    startRoot=motion.frames[0].root;
@@ -80,14 +86,39 @@ namespace Yachiyo {
    else {if(motion.bones.Length!=clip.bones.Length)throw new ArgumentException("Stream skeleton changed");for(int i=0;i<motion.bones.Length;i++)if(motion.bones[i]!=clip.bones[i])throw new ArgumentException("Stream bone order changed");streamQueue.Enqueue(motion);StreamChunks++;}
   }
   public void DiscardFuture()=>streamQueue.Clear();
-  public void Act(string action,string label) {Streaming=false;streamQueue.Clear();Initialize();CaptureTransition();clip=null;localAction=action;actionTime=0;CurrentAction=label;MotionSource="本地动作";}
+  public void BeginSpeechMotion(){
+   Act("idle","正在准备语音动作");NeuralSpeechMotion=true;SpeechMotionFrames=0;SpeechMotionUnderruns=0;speechChunkStart=0;speechUnderrun=false;
+  }
+  public void AddSpeechMotion(MotionClip motion){
+   if(!NeuralSpeechMotion)return;
+   motion.Validate();
+   if(motion.startFrame!=SpeechMotionFrames||SpeechMotionFrames+motion.frames.Length>1800||Mathf.Abs(motion.fps-30)>.001f)throw new ArgumentException("Invalid speech frame sequence");
+   if(clip==null){
+    Play(motion,"StreamTalk 语音动作");NeuralSpeechMotion=true;Streaming=true;speechChunkStart=motion.startFrame/30f;
+   }else{
+    if(motion.bones.Length!=clip.bones.Length)throw new ArgumentException("Speech skeleton changed");
+    for(int i=0;i<motion.bones.Length;i++)if(motion.bones[i]!=clip.bones[i])throw new ArgumentException("Speech bone order changed");
+    streamQueue.Enqueue(motion);
+   }
+   SpeechMotionFrames+=motion.frames.Length;
+  }
+  public void EndSpeechMotion(){if(NeuralSpeechMotion)Act("idle","待机");}
+  public void Act(string action,string label) {NeuralSpeechMotion=false;Streaming=false;streamQueue.Clear();Initialize();CaptureTransition();clip=null;localAction=action;actionTime=0;CurrentAction=label;MotionSource="本地动作";}
   public void Tick(float dt) {
    Initialize();actionTime+=dt;blendClock+=dt;
    foreach(var p in bones)p.Value.localRotation=restLocal[p.Key];
    bones[HumanBodyBones.Hips].localPosition=hipsRest;
    if(clip!=null) {
-    clock+=dt;
-    if(Streaming&&clock>=clip.frames.Length/clip.fps){
+    if(NeuralSpeechMotion){
+     // Media time is authoritative: stalls hold and cancel releases the model.
+     clock=Mathf.Max(0,speechClock-speechChunkStart);
+     while(streamQueue.Count>0&&clock>=clip.frames.Length/clip.fps){
+      speechChunkStart+=clip.frames.Length/clip.fps;clip=streamQueue.Dequeue();clock=Mathf.Max(0,speechClock-speechChunkStart);
+     }
+     bool underrun=speechClock>SpeechMotionFrames/30f+.05f;
+     if(underrun&&!speechUnderrun)SpeechMotionUnderruns++;speechUnderrun=underrun;
+    }else clock+=dt;
+    if(!NeuralSpeechMotion&&Streaming&&clock>=clip.frames.Length/clip.fps){
      if(streamQueue.Count>0){clock-=clip.frames.Length/clip.fps;clip=streamQueue.Dequeue();CurrentAction=clip.prompt;MotionSource=clip.source;}
      else {if(clock-dt<clip.frames.Length/clip.fps)StreamUnderruns++;clock=Mathf.Min(clock,clip.frames.Length/clip.fps);}
     }

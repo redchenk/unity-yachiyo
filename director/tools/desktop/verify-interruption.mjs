@@ -18,6 +18,7 @@ const result={passed:false,plays:[],plans:[],requests:0,context:false};
 try{
  await wait(()=>window.TSUKUYOMI_AVATAR_DRIVER?.ready,'avatar not ready');
  document.querySelector('.studio-settings-header button')?.click();
+ localStorage.setItem('yachiyo:speechMotion','off');
  localStorage.setItem('roomTTSSettings',JSON.stringify({enabled:true,provider:'fixture',useProxy:true}));
  localStorage.setItem('roomMemorySettings',JSON.stringify({enabled:false,retrievalMode:'off',writeMode:'off'}));
  localStorage.setItem('roomLLMSettings',JSON.stringify({provider:'custom',apiUrl:'http://fixture.invalid/v1/chat/completions',apiKey:'fixture',model:'fixture',useProxy:true}));

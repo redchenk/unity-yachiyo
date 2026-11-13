@@ -11,9 +11,12 @@ const project = path.resolve(import.meta.dirname, '../../..');
 const output = path.join(project, 'artifacts/tts-verification'); fs.mkdirSync(output, { recursive: true });
 const option = process.argv.indexOf('--settings-file');
 const live = option >= 0;
+const neural = process.argv.includes('--streamtalk');
+const audioOption = process.argv.indexOf('--audio-file');
 const settings = live ? JSON.parse(fs.readFileSync(process.argv[option + 1], 'utf8')) : { enabled: true, provider: 'gpt-sovits', apiUrl: 'http://127.0.0.1:3289/tts' };
 assert.equal(settings.provider, 'gpt-sovits');
-const fixture = lipsyncFixture().wav; fixture.writeUInt32LE(36, 4); fixture.writeUInt32LE(0, 40);
+const fixture = audioOption>=0 ? fs.readFileSync(process.argv[audioOption+1]) : lipsyncFixture().wav;
+fixture.writeUInt32LE(36, 4); fixture.writeUInt32LE(0, 40);
 const script = path.join(output, live ? 'live-provider.js' : 'stream-fixture.js'), nativeReport = script + '.native';
 fs.writeFileSync(script, `(async()=>{
 const post=data=>window.webkit.messageHandlers.yachiyoVerification.postMessage(JSON.parse(JSON.stringify(data)));
@@ -24,6 +27,7 @@ const progress=setInterval(()=>post({...result,phase:'playback'}),500);
 try{
  await wait(()=>window.TSUKUYOMI_AVATAR_DRIVER?.ready,'avatar not ready');
  document.querySelector('.studio-settings-header button')?.click();
+ localStorage.setItem('yachiyo:speechMotion',${JSON.stringify(neural?'on':'off')});
  localStorage.setItem('roomTTSSettings',JSON.stringify(${JSON.stringify({ ...settings, enabled: true })}));
  localStorage.setItem('roomMemorySettings',JSON.stringify({enabled:false,retrievalMode:'off',writeMode:'off'}));
  localStorage.setItem('roomLLMSettings',JSON.stringify({provider:'custom',apiUrl:'http://fixture.invalid/v1/chat/completions',apiKey:'test-fixture',model:'fixture',useProxy:true}));
@@ -74,7 +78,7 @@ post({...result,done:true});
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'yachiyo-tts-'));
 const binary = process.env.YACHIYO_UNITY_BINARY || path.join(os.homedir(), 'Applications/Yachiyo Motion Studio.app/Contents/MacOS/Yachiyo Motion Studio');
 for (const extension of ['.result.json', '.progress.json', '.native.json']) fs.rmSync(script + extension, { force: true });
-const child = spawn(binary, ['--no-auto-connect', '--verify-director', nativeReport, '--verify-web-script', script, '-logFile', script + '.player.log'], { stdio: 'ignore', env: { ...process.env, YACHIYO_DATA_DIR: temp } });
+const child = spawn(binary, ['--no-auto-connect', ...(neural?['--motion-platform','windows']:[]), '--verify-director', nativeReport, '--verify-web-script', script, '-logFile', script + '.player.log'], { stdio: 'ignore', env: { ...process.env, YACHIYO_DATA_DIR: temp } });
 let exited = false, exitCode, exitSignal; child.on('exit', (code, signal) => { exited = true; exitCode = code; exitSignal = signal; });
 try {
  const start = Date.now();
@@ -84,8 +88,8 @@ try {
  assert(result.passed, result.error);
  const native = JSON.parse(fs.readFileSync(nativeReport + '.json', 'utf8'));
  assert(native.mouthFrames > 10 && native.maxVisemes.some(value => value > 1), 'real Unity mouth did not follow playback');
- assert(native.maxSpeechPlaybackWeight > .9, 'actual installed page did not start speech playback');
- assert(native.cuesFired > 0 && native.lastCue === 'explain', 'streaming BEAT did not reach the media-clock body gesture');
+ if(neural){assert(native.generatedMotionSeen&&native.motionSource.includes('StreamTalk')&&native.neuralFrames>30,'installed page did not play real StreamTalk');assert.equal(native.cuesFired,0);assert.equal(native.neuralUnderruns,0);}
+ else {assert(native.maxSpeechPlaybackWeight > .9, 'actual installed page did not start speech playback');assert(native.cuesFired > 0 && native.lastCue === 'explain', 'streaming BEAT did not reach the media-clock body gesture');}
  assert.equal(native.speechPlaybackWeight, 0, 'speech playback did not return to idle after stop');
  assert.equal(native.mouthOpen, 0); assert(native.currentVisemeMax < 1, 'mouth did not close after stop');
  // No local endpoint, voice paths, credentials or spoken audio in the report.

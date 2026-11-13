@@ -12,7 +12,7 @@ namespace Yachiyo {
   public string source, prompt, coordinates;
   public float fps, referenceHipHeight;
   public float generationSeconds;
-  public int sequence,revision;
+  public int sequence,revision,startFrame,totalFrames;
   public string[] bones;
   public MotionFrame[] frames;
   public float Duration => frames == null || fps <= 0 ? 0 : (frames.Length - 1) / fps;

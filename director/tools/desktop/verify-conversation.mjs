@@ -27,6 +27,7 @@ try{
  window.addEventListener('yachiyo:avatar-receipt',e=>result.receipts.push(e.detail));
  const original=fetch, bytes=Uint8Array.from(atob('${bytes.toString('base64')}'),c=>c.charCodeAt(0));
  window.fetch=(url,options)=>String(url)==='/api/tts'?Promise.resolve(new Response(bytes,{headers:{'Content-Type':'audio/wav'}})):original(url,options);
+ localStorage.setItem('yachiyo:speechMotion','off');
  localStorage.setItem('roomTTSSettings',JSON.stringify({enabled:true,provider:'fixture',useProxy:true}));
  const speech=__avatarTools.createLive2DSpeechPlayer();
  driver.control('camera_lock',0);driver.control('camera_reset');await delay(600);post({phase:'idle'});await delay(400);

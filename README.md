@@ -10,9 +10,9 @@
 
 - 保留原导演台的观众队列、人格、记忆、LLM 控制、字幕、TTS 和 RVC 演唱流程。
 - Unity 接收语义动作、情绪、眨眼、视线及原始 A/I/U/E/O 口型，不经过 Cubism 参数转换。
-- 实际音频开始播放时才启动表演；口型跟随音频时钟。暂停、拖动进度、结束和取消关闭旧口型。
+- 实际音频开始播放时才启动表演；口型和 StreamTalk 身体动作跟随音频时钟。暂停关闭口型并保持姿态，恢复继续；结束和取消清除旧动作。
 - Mac 内嵌播放器会逐句接收并补全 GPT-SoVITS 流式 WAV 的长度信息，再开始播放；可预取下一句。停止会取消尚未完成的音频下载。独立 Chromium 调试入口保留边接收边播放。
-- 身体动作默认走现有模型服务；「角色」页可以明确选择本地预览。挥手、鞠躬、转身、走路、鼓掌、跳舞可请求模型；AI 明确选择的点头、轻微摇头和交谈手势使用本地执行器；禁止歪头。
+- 说话时默认使用 StreamTalk，根据实际语音生成身体和手指动作；「角色」页可关闭此功能。其他身体动作走现有模型服务；「角色」页可以明确选择本地预览。挥手、鞠躬、转身、走路、鼓掌、跳舞可请求模型；AI 明确选择的点头、轻微摇头和交谈手势使用本地执行器；禁止自动思考歪头。
 - 回执包括 accepted / started / completed / cancelled / unsupported / failed。模型失败会显示失败，不会悄悄改播预览。
 - session、epoch、commandId、seq 和 utteranceId 隔离过期命令。取消、切换服务、断线重连不补播旧动作。
 - 隐藏、锁定、重置作用于真实 3D 场景。角色区域普通拖动移动位置，右键或 Shift + 拖动旋转，滚轮缩放。「角色」页也提供上下左右按钮、滑杆和缩放；构图位置与视角自动保存。
@@ -76,9 +76,9 @@ python -m unittest discover -s tests -v
 ## 对话时的角色表演
 
 - `thinking`、`listening` 等状态只表示交互进度，不触发歪头、点头或思考表情。统一应用关闭鼠标驱动头部；相机拖动与角色位置控件仍可手动使用。
-- 音频播放只提供真实口型与表演时钟，不自动叠加循环的手臂、胸、颈或头部动作。`performance.gestures` 缺省、为空、格式错误或只有禁用动作时，均不补默认手势。待机呼吸、眨眼与布料物理仍独立运行。
+- StreamTalk 使用最终实际播放的音频生成动作，不叠加循环的手臂、胸、颈或头部动作。关闭 StreamTalk 时，音频只提供口型与表演时钟。`performance.gestures` 缺省、为空、格式错误或只有禁用动作时，均不补默认手势。待机呼吸、眨眼与布料物理仍独立运行。
 - LLM 在同一次回复中输出 `performance`：安慰、感谢、解释、打趣、惊讶、克制拒绝或倾听。持续情绪在会话内跨句保留、随时间衰减，并进入下一次回复的提示；规则降级避免把“没有生气”“别哭，我陪你”演成愤怒或哭泣。
-- 表情、眼神、语速、身体幅度共用这份计划。`gestures: []` 表示无手势，保留眨眼、呼吸和轻微姿势变化；安慰时使用关切的柔和表情，感谢时有短暂移开视线。
+- 表情、眼神、语速、身体幅度共用这份计划。关闭 StreamTalk 时，`gestures: []` 表示不执行局部手势，保留眨眼、呼吸和轻微姿势变化；安慰时使用关切的柔和表情，感谢时有短暂移开视线。
 - `explain`、`open_palms`、`emphasis`、`nod`、`shake_head`、`lean_in` 等交谈手势只有 AI 明确输出时才在 Unity 就地执行，有准备、表达和收回阶段。身体和头部可同时执行，动作不再拉伸到整句长度。完整模型动作继续使用现有 Windows／Ubuntu 服务。
 - 一句语音结束后，属于该句的延迟动作不会继续排队播放。模型播放期间不叠加本地头部或手臂手势，避免破坏生成姿态。
 - 表情和视线在音频实际开始时生效，句末回到较淡的当前情绪，而非立即清空。口型继续走 `YachiyoFaceController.SetAudioMouth`。
@@ -90,6 +90,30 @@ python -m unittest discover -s tests -v
 
 短句动作与位置控件的实机回归：`node director/tools/desktop/verify-conversation.mjs`（先构建并安装统一应用）。
 
-当前为自主 AI 决策驱动，不需要摄像头、手机或真人动捕。需要区分：交谈手势仍是 AI 选择、Unity 执行的局部动作；DiP 是实际神经网络生成的文本动作；连续语音条件动作生成尚未接通。不能把前两者称为 StreamTalk 已部署。
+## StreamTalk 语音驱动动作
 
-[StreamTalk 官方仓库](https://github.com/Xiangyue-Zhang/StreamTalk) 的公开推理链依赖模型权重、WavLM、BEAT2 检索数据及单独授权的 SMPL-X 模型。2026-11-13 检查的 Windows 安装只有 DiP/ARDY 目录和 8 GB RTX 3070 Laptop GPU；项目未下载这些外部数据、未做 StreamTalk 推理或显存性能验收。
+已接入实际 StreamTalk 网络：最终 TTS 音频 → WavLM → 动作生成 → 检索关键姿态 → 动作细化 → Unity 身体和手指。脸部情绪继续由对话计划驱动，口型继续来自实际音频；没有把 FLAME 的 100 维输出直接冒充八千代表情。
+
+每个模型窗口为 60 帧、30 FPS，保留 8 帧用于与下一段融合。首段准备好后播放语音，后续分段生成；Unity 以音频媒体时间采样动作。暂停保持姿态，恢复接续；取消、切换系统和断线丢弃过期帧。若生成赶不上播放，会保持最后一个生成姿态并记录欠载，不会用预设动作填充。
+
+Windows 的 DiP 与 StreamTalk 共用 `E:\YachiyoMotion` 的同一启动/关闭入口、同一服务端口和串行 GPU 队列。StreamTalk 的新增 Python 包隔离在 `runtime-streamtalk`，原 DiP 运行时保留。服务启动时预热；无需再手动启动另一个进程。Mac 仍是一个应用。Ubuntu 切换入口保留，Ubuntu 的 StreamTalk 安装和实机验收尚未完成。
+
+首次准备：
+
+1. 运行 `python3 tools/fetch_streamtalk.py` 下载固定版本的源码、speaker-2 权重、WavLM 和 95 份 BEAT2 检索动作。
+2. 从 [SMPL-X 官网](https://smpl-x.is.tue.mpg.de/) 取得授权后，将 `SMPLX_NEUTRAL_2020.npz` 放入 `models/streamtalk/`。
+3. 将 `vendor/streamtalk`、`models/streamtalk`、更新的 `service/` 与 `windows/` 复制到笔记本既有 `E:\YachiyoMotion`。用原运行时执行 `runtime\python.exe windows\install_streamtalk.py`，再通过现有入口重启动作服务。
+4. Mac「角色」页选择 Windows，保持「StreamTalk 语音驱动动作」开启。模型资源与检索缓存不进入仓库或 Mac 安装包。
+
+3070 Laptop 8 GB 的首轮实测：6 秒实际人声产生 180 帧，首段约 2.11 秒、后续窗口约 1.3–1.4 秒；StreamTalk 单独进程的 PyTorch 显存峰值约 1599 MiB。与 DiP 共用服务时实测峰值约 1972 MiB。这个数字不包括驱动、桌面和其他进程，也不是端到端聊天响应时间；实际性能取决于 GPU 负载和语音长度。
+
+真实 GPU/原生播放联调（需先启动笔记本服务并建立 SSH 隧道）：
+
+```sh
+cd director
+node tools/desktop/verify-streamtalk.mjs /absolute/path/spoken.wav
+```
+
+它只用 WAV 代替 TTS 返回，身体动作必须由当前 GPU 服务实时生成，检查播放时钟、动作变化、暂停、恢复和打断。测试音频与私有模型不入库。此模型的公开 speaker-2 检索风格并非针对八千代或日语专门训练，动作风格仍需实际对话试听与观察。
+
+2026-11-13 实机验收：实际安装页面完整播放 6 秒人声，收到 293 个口型/媒体时钟消息；单独的原生链路验证了神经动作、暂停保持、恢复和取消，记录点无动作欠载。固定随机种子时，人声与静音输入的输出姿态不同，确认音频条件确实参与生成。当前 GPT-SoVITS 地址连接失败，本轮使用官方真实人声 WAV 验证动作，不等于已完成当前语音服务或日语音色验收。

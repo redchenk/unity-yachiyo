@@ -1,5 +1,9 @@
 # Third-party assets
 
+- StreamTalk: official `Xiangyue-Zhang/StreamTalk`, pinned source `550faa3d2fcf56d2055552fef6a19a107c998d44`, MIT; see `licenses/StreamTalk-MIT.txt`. The unmodified speaker-2 CFG-3 checkpoint is fetched from `X-Zhang/StreamTalk` revision `35a40bc4ddd968afefc79bec23aff2331ef539dc` with SHA256 verification. The bundled official face network is used internally by the motion sampler; FLAME expressions are not presented as native avatar facial blendshapes.
+- StreamTalk external assets: WavLM `patrickvonplaten/wavlm-libri-clean-100h-large`, revision `e70e3a062ec399c46008ee55d1fb52c7ba338d5c`; BEAT2 English speaker-2 training retrieval motions, revision `8689ecb43513ba31964fd60e0ca69be02d3b0872`. They retain their upstream model/data terms and are not redistributed in Git or the Mac client.
+- SMPL-X neutral with FLAME 2020: obtained separately from the official SMPL-X download page by the licensee. `SMPLX_NEUTRAL_2020.npz`, derived retrieval caches and model assets remain private. The source MIT license does not grant rights to redistribute these assets.
+
 - Character: supplied by the user in `月见一万代/月见一万代_FT_10_12.unitypackage`. Original author names/paths are preserved. No redistribution license was supplied. Keep the original package, extracted character assets and built app private until the applicable model terms are confirmed.
 - Kimodo source: NVIDIA, Apache-2.0, pinned commit `e1c219c99b4b94ba48be1fb6a1cbc64ecee4c954`; full license at `licenses/Kimodo-Apache-2.0.txt`. The embedded demonstration motion is converted from the official repository's `06_root_waypoints/motion.npz`, with its provenance shown in the application.
 - Kimodo checkpoint and training data have separate licenses; see the linked official model card. No model weights are included in the Unity app.

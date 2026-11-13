@@ -1,5 +1,11 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
+const speechMotion=ref(localStorage.getItem('yachiyo:speechMotion')!=='off');
+const speechStatus=ref('随语音生成');
+const saveSpeechMotion=()=>{localStorage.setItem('yachiyo:speechMotion',speechMotion.value?'on':'off');if(!speechMotion.value)window.dispatchEvent(new CustomEvent('yachiyo:avatar-stop'));};
+const motionStatus=event=>{const d=event.detail;speechStatus.value=d.status==='loading'?'正在生成首段动作…':d.status==='ready'?'语音动作已就绪':d.error || '随语音生成';};
+onMounted(()=>window.addEventListener('yachiyo:speech-motion',motionStatus));
+onUnmounted(()=>window.removeEventListener('yachiyo:speech-motion',motionStatus));
 const bodyMode=ref(localStorage.getItem('yachiyo:avatar:bodyMode') || 'model');
 const saveBodyMode=()=>localStorage.setItem('yachiyo:avatar:bodyMode',bodyMode.value);
 const props=defineProps({ ready: Boolean, connection: String, receipt: Object, capabilities: Object, compact: Boolean });
@@ -19,6 +25,8 @@ const move = (axis,amount) => control('camera_'+axis,Math.max(-.65,Math.min(.65,
     <p>{{ connection }}</p>
     <p>角色画面与相机操作在「Yachiyo Motion Studio」窗口。这里继续控制直播、弹幕、语音和点歌。</p>
     <label style="font-size:13px">身体动作 <select v-model="bodyMode" aria-label="身体动作来源" @change="saveBodyMode"><option value="model">动作模型（沿用 3D 客户端的系统连接）</option><option value="local">本地动作预览</option></select></label>
+    <label class="speech-motion-setting"><input type="checkbox" v-model="speechMotion" @change="saveSpeechMotion">StreamTalk 语音驱动动作</label>
+    <div v-if="speechMotion" class="speech-motion-status" role="status">{{ speechStatus }}</div>
     <label v-if="capabilities?.selectedBackend" style="font-size:12px;display:block;margin-top:8px">动作服务
       <select :value="capabilities.selectedBackend" aria-label="动作服务系统" @change="selectBackend"><option value="windows">Windows</option><option value="ubuntu">Ubuntu</option></select>
       <button type="button" @click="reconnect">重连</button>
@@ -52,6 +60,7 @@ const move = (axis,amount) => control('camera_'+axis,Math.max(-.65,Math.min(.65,
 <style>
 .unity-stage-panel{position:absolute;z-index:5;left:8%;right:8%;top:24%;max-width:590px;margin:auto;padding:32px;border:1px solid #c5d8d4;border-radius:22px;background:#fffcf5f2;color:#283e42;box-shadow:0 18px 70px #415e5722}
 .unity-stage-panel h2{font-size:26px;margin:18px 0}.unity-stage-panel p{font-size:14px;line-height:1.8}.unity-stage-panel small{font-size:12px}
+.speech-motion-setting{display:block;font-size:12px;margin-top:10px}.speech-motion-status{font-size:11px;margin:5px 0;color:#786d7b;overflow-wrap:anywhere}
 .unity-status{color:#866e54;font-size:13px}.unity-status.connected{color:#22755e}.unity-stage-buttons{display:flex;gap:8px;flex-wrap:wrap;margin:24px 0}.unity-stage-buttons button{padding:9px 16px;border:1px solid #b3cdc4;background:#edf5ee;border-radius:9px;cursor:pointer}.unity-stage-buttons button:disabled{opacity:.45;cursor:default}.unity-receipt{overflow-wrap:anywhere}
 .unity-avatar-mode #live2d-container{pointer-events:none;visibility:hidden}
 .unity-stage-panel.compact{position:static;padding:8px;margin:0 0 12px;max-width:none;border-radius:10px;box-shadow:none}

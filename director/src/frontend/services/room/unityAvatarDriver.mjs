@@ -4,9 +4,12 @@ const clamp = n => Math.max(0, Math.min(1, Number(n) || 0));
 // Semantic boundary: this runs before any Cubism parameter conversion.
 export function createUnityAvatarDriver({ url, onStatus = () => {}, onReceipt = () => {}, WebSocketClass = WebSocket, events = window, getBodyMode = () => 'model' } = {}) {
   let socket, disposed = false, retry, sessionId = '', epoch = 0, seq = 0, ready = false;
-  let activeAudio = null, lastMouthAt = 0, lastReceipt = null, lastEmotion = 'neutral';
+  let activeAudio = null, lastMouthAt = 0, lastReceipt = null, lastEmotion = 'neutral', backend = 'windows';
   const audioIds = new WeakMap(), timers = new Set();
-  const driver = { mode: 'unity', perform, cancel, audioStart, audioEnd, mouth, state, dispose, control: (action, value) => send('control', { action, value: typeof value === 'number' ? value : 0, text: typeof value === 'string' ? value : '' }),
+  const driver = { mode: 'unity', perform, cancel, audioStart, audioEnd, mouth, state, dispose,
+    get backend(){return backend;},
+    motion(audio,motion){const token=audioIds.get(audio);if(!token||token!==activeAudio||token.epoch!==epoch)return false;return !!send('motion',{motion});},
+    control: (action, value) => send('control', { action, value: typeof value === 'number' ? value : 0, text: typeof value === 'string' ? value : '' }),
     get ready() { return ready; }, get lastReceipt() { return lastReceipt; }, get context() { return { sessionId, epoch, utteranceId: activeAudio?.id || '' }; } };
   function send(kind, payload, ids = {}) {
     if (!ready || socket?.readyState !== 1) return null;
@@ -50,20 +53,24 @@ export function createUnityAvatarDriver({ url, onStatus = () => {}, onReceipt = 
     return { ...intent, commandIds };
   }
   function state(detail = {}) { const emotion = detail.emotion || ''; if (emotion) lastEmotion = emotion; return send('state', { mode: detail.mode || 'idle', emotion, holdMs: Math.min(15000, Number(detail.holdMs) || 0) }); }
-  function audioStart(audio, { source = 'speech', turnId = '', performance = null } = {}) {
+  function audioStart(audio, { source = 'speech', turnId = '', performance = null, neuralMotion = false } = {}) {
     if (!ready) return;
     let token = audioIds.get(audio);
-    if (activeAudio === token && token?.epoch === epoch && token.sessionId === sessionId) return;
+    if (activeAudio === token && token?.epoch === epoch && token.sessionId === sessionId) {
+      if(token.paused){token.paused=false;send('audio',{event:'resume',source,audioTimeMs:Math.round((audio.currentTime||0)*1000)});}
+      return;
+    }
     if (activeAudio) audioEnd(activeAudio.audio);
     token = { audio, source, id: uuid(), turnId: turnId || uuid(), epoch, sessionId };
     audioIds.set(audio, token); activeAudio = token;
     if (performance?.emotion) lastEmotion = performance.emotion;
-    send('audio', { event: 'start', source, emotion: lastEmotion, performance, audioTimeMs: Math.round((audio.currentTime || 0) * 1000) }, { turnId: token.turnId, utteranceId: token.id });
+    send('audio', { event: 'start', source, emotion: lastEmotion, performance, neuralMotion, audioTimeMs: Math.round((audio.currentTime || 0) * 1000) }, { turnId: token.turnId, utteranceId: token.id });
   }
   function audioEnd(audio, event = 'end') {
     const token = audioIds.get(audio);
     if (!token || activeAudio !== token) return;
     send('audio', { event, source: token.source, audioTimeMs: Math.round((audio.currentTime || 0) * 1000) });
+    if(event==='pause'){token.paused=true;return;}
     activeAudio = null;
   }
   function mouth(detail = {}) {
@@ -91,6 +98,7 @@ export function createUnityAvatarDriver({ url, onStatus = () => {}, onReceipt = 
       if (msg.type === 'status') {
         if (sessionId !== msg.sessionId || epoch !== msg.epoch || !msg.ready) clearLocal();
         sessionId = msg.sessionId; epoch = msg.epoch; ready = !!msg.ready;
+        backend=msg.capabilities?.selectedBackend || backend;
         onStatus(msg);
       }
       if (msg.type === 'receipt') { lastReceipt = msg; onReceipt(msg); events.dispatchEvent(new CustomEvent('yachiyo:avatar-receipt', { detail: msg })); }

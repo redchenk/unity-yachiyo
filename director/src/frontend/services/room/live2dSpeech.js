@@ -1,5 +1,6 @@
 import { attachAudioMouthAnalyser } from './audioMouthAnalyser.js';
 import { affectRuntime, compilePerformanceTimeline, publishPerformance } from './performancePlan.mjs';
+import { prepareSpeechMotion } from './speechMotion.mjs';
 import { readLipsyncSettings } from './lipsyncSettings.js';
 import { CLOSED_MOUTH } from '../../../shared/audio-lipsync.mjs';
 import { playableTtsBlob } from '../../../shared/tts-audio.mjs';
@@ -415,7 +416,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   let lastPlaybackEndedAt = 0;
   const speechQueue = [];
   const audioMeters = new WeakMap();
-  const audioBlobs = new WeakMap(), audioTiming = new WeakMap();
+  const audioBlobs = new WeakMap(), audioTiming = new WeakMap(), audioDecoded = new WeakMap(), audioMotions = new WeakMap();
   let lipsyncSettings = readLipsyncSettings();
   const refreshLipsync = () => { lipsyncSettings = readLipsyncSettings(); };
   window.addEventListener?.('tsukuyomi:lipsync-settings', refreshLipsync);
@@ -494,6 +495,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   }
 
   function releaseAudio(audio) {
+    audioMotions.get(audio)?.stop(); audioMotions.delete(audio); audioDecoded.delete(audio);
     audioMeters.get(audio)?.dispose();
     audioMeters.delete(audio);
     audio?.pause?.();
@@ -633,6 +635,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     if (!audioContext || !blob || blob.size > 20 * 1024 * 1024) return;
     try {
       const decoded = await audioContext.decodeAudioData(await blob.arrayBuffer());
+      audioDecoded.set(audio, decoded);
       const pcm = decoded.getChannelData(0), size = Math.max(1, Math.round(decoded.sampleRate * .02));
       let onset = 0;
       for (let i = 0; i < pcm.length; i += size) {
@@ -809,6 +812,20 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       }
       await prepareAudioMeter(audio);
       if (window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity') await preparePerformanceAudio(audio);
+      let motionError='';
+      if (window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity' && audioDecoded.has(audio) && localStorage.getItem('yachiyo:speechMotion') !== 'off' && options.neuralMotion !== false) {
+        const report=detail=>window.dispatchEvent(new CustomEvent('yachiyo:speech-motion',{detail}));
+        report({status:'loading',model:'StreamTalk'});
+        try {
+          const motion=await prepareSpeechMotion(audioDecoded.get(audio), {
+            backend:window.TSUKUYOMI_AVATAR_DRIVER.backend, cancelled:()=>token!==queueToken, report
+          });
+          audioMotions.set(audio,motion);
+        } catch(error) {
+          if(error.name==='AbortError'){releaseAudio(audio);throw error;}
+          motionError=error.message; report({status:'error',error:motionError});
+        }
+      }
       if (token !== queueToken) { releaseAudio(audio); throw makeStopError(); }
       currentAudio = audio;
       audio.preload = 'auto';
@@ -823,9 +840,10 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
               ...audioTiming.get(audio), duration: audioTiming.get(audio)?.duration || audio.duration || 0, text: finalText
             }) : null;
         const plan = plannedPerformance;
-        window.TSUKUYOMI_AVATAR_DRIVER?.audioStart(audio, { source: 'speech', turnId: options.turnId, performance: plan });
+        window.TSUKUYOMI_AVATAR_DRIVER?.audioStart(audio, { source: 'speech', turnId: options.turnId, performance: plan, neuralMotion:audioMotions.has(audio) });
+        audioMotions.get(audio)?.start(window.TSUKUYOMI_AVATAR_DRIVER,audio);
         if (!playbackStarted && plan) publishPerformance(plan);
-        setState({ status: 'playing', error: '' });
+        setState({ status: 'playing', error: motionError });
         const mouthText = audio.dataset.speechText || speechText;
         if (!playbackStarted) {
           playbackStarted = true;

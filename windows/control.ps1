@@ -4,13 +4,15 @@ $ProgressPreference='SilentlyContinue'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $root=Split-Path $PSScriptRoot -Parent
 $python=Join-Path $root 'runtime\python.exe'
+$streamPython=Join-Path $root 'runtime-streamtalk\python.exe'
+if ((Test-Path (Join-Path $root 'state\streamtalk-installed.json')) -and (Test-Path $streamPython)) { $python=$streamPython }
 $entry=Join-Path $PSScriptRoot 'run_service.py'
 $statePath=Join-Path $root 'state\service.json'
 function Get-OwnedProcess {
     if (!(Test-Path $statePath)) { return $null }
     $state=Get-Content $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
     $process=Get-CimInstance Win32_Process -Filter "ProcessId = $($state.pid)"
-    if ($process -and $process.ExecutablePath -eq $python -and
+    if ($process -and ($process.ExecutablePath -in @((Join-Path $root 'runtime\python.exe'),$streamPython)) -and
         $process.CommandLine.IndexOf($entry,[StringComparison]::OrdinalIgnoreCase) -ge 0) {
         return $process
     }

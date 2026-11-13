@@ -33,12 +33,13 @@ namespace Yachiyo {
    public string type,kind,sessionId,commandId,turnId,utteranceId,state,reason;public int epoch;public long seq;public Payload payload;
   }
   [Serializable]public class Payload {
+   public MotionClip motion;public bool neuralMotion;
    public PerformancePlan performance;
    public string emotion,mode,interruptPolicy,@event,source,bodyMode,action,text;public float intensity,durationMs,holdMs,value,a,i,u,e,o;public int priority,audioTimeMs;public bool silence;public Behavior[] actions;
   }
   [Serializable]public class Behavior {public string type,side,target;public float durationMs,delayMs,intensity;}
   [Serializable]class Ready {public string type="ready";public Capabilities capabilities;}
-  [Serializable]class Capabilities {public string protocol="yachiyo-avatar/1";public bool humanoid,audioVisemes,serviceConnected;public int shapeCount;public string selectedBackend;public float cameraX,cameraY,cameraDistance,cameraYaw,cameraPitch;public bool cameraLocked;public string[] actions,emotions;public string motionBackend="model: wave/bow/turn/walk/clap/dance via existing Windows/Ubuntu service; local: explicit preview; explicit AI nod/shake/arm cues use local gestures; audio-conditioned neural motion is not connected";}
+  [Serializable]class Capabilities {public string protocol="yachiyo-avatar/1";public bool humanoid,audioVisemes,serviceConnected;public int shapeCount;public string selectedBackend;public float cameraX,cameraY,cameraDistance,cameraYaw,cameraPitch;public bool cameraLocked;public string[] actions,emotions;public string motionBackend="model: wave/bow/turn/walk/clap/dance via existing Windows/Ubuntu service; local: explicit preview; explicit AI nod/shake/arm cues use local gestures; speech: StreamTalk audio-conditioned neural motion with media clock";}
 
   void Start(){
    avatar.followPointer=false;
@@ -124,6 +125,7 @@ namespace Yachiyo {
      SendReady();
      break;
     case "perform":
+     if(avatar.NeuralSpeechMotion&&p.actions!=null&&p.actions.Length>0){Receipt(msg,"unsupported","StreamTalk owns the body during speech");return;}
      if(string.IsNullOrEmpty(msg.commandId)||!seen.Add(msg.commandId))return;
      ReceivedPerformances++;
      if(seen.Count>1024)seen.Clear();
@@ -140,9 +142,13 @@ namespace Yachiyo {
      break;
     case "audio":
      Debug.Log("DIRECTOR_AUDIO "+p.@event+" seq="+msg.seq+" current="+(msg.utteranceId==utterance));
-     if(p.@event=="start"&&!string.IsNullOrEmpty(msg.utteranceId)){utterance=msg.utteranceId;mouthClock=-1;face.CloseAudioMouth();avatar.SpeechAudio(p.source=="speech");if(p.source=="speech"){avatar.SetCharacterState("speaking",p.emotion,15000);StartPerformance(p.performance);}}
-     else if(msg.utteranceId==utterance){CancelSpeechPerformances(utterance);utterance="";face.CloseAudioMouth();avatar.SpeechAudio(false);EndPerformance();}
+     if(p.@event=="start"&&!string.IsNullOrEmpty(msg.utteranceId)){utterance=msg.utteranceId;mouthClock=-1;face.CloseAudioMouth();avatar.SpeechAudio(p.source=="speech");if(p.source=="speech"){if(p.neuralMotion){CancelPerformances("neural-speech");ui.StopMotion(true);avatar.BeginSpeechMotion();}avatar.SetCharacterState("speaking",p.emotion,15000);StartPerformance(p.performance);}}
+     else if(msg.utteranceId==utterance&&(p.@event=="pause"||p.@event=="resume")){face.CloseAudioMouth();avatar.SpeechAudio(p.@event=="resume");avatar.SpeechFrame(p.audioTimeMs/1000f,0);}
+     else if(msg.utteranceId==utterance){CancelSpeechPerformances(utterance);utterance="";face.CloseAudioMouth();avatar.SpeechAudio(false);avatar.EndSpeechMotion();EndPerformance();}
      break;
+    case "motion":
+     if(string.IsNullOrEmpty(utterance)||msg.utteranceId!=utterance||p.motion==null)return;
+     avatar.AddSpeechMotion(p.motion);break;
     case "mouth":
      if(string.IsNullOrEmpty(utterance)||msg.utteranceId!=utterance||p.audioTimeMs<mouthClock)return;
      mouthClock=p.audioTimeMs;avatar.SpeechFrame(p.audioTimeMs/1000f,p.value);AdvancePerformance(p.audioTimeMs);ReceivedMouthFrames++;face.SetAudioMouth(p.value,p.a,p.i,p.u,p.e,p.o,p.silence);break;

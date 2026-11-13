@@ -49,7 +49,18 @@ def main():
         provider.load()
         jobs = Jobs(provider, ROOT / "cache")
         hosted = Jobs(HostedArdyProvider(), ROOT / "cache/ardy")
-        server = ThreadingHTTPServer(("127.0.0.1", 8787), make_handler(jobs, hosted))
+        # The same manual start/stop entry owns both models and one GPU queue.
+        from service.streamtalk_provider import StreamTalkProvider
+        from service.speech_jobs import SpeechJobs
+        speech = SpeechJobs(StreamTalkProvider(), jobs.pool)
+        if (ROOT / "models/streamtalk/SMPLX_NEUTRAL_2020.npz").is_file():
+            def warm_speech():
+                try: speech.provider.load()
+                except Exception:
+                    speech.provider.state = "error"
+                    logging.exception("StreamTalk warmup failed; DiP remains available")
+            jobs.pool.submit(warm_speech)
+        server = ThreadingHTTPServer(("127.0.0.1", 8787), make_handler(jobs, hosted, speech))
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
         record("ready")
         print("动作服务已就绪：http://127.0.0.1:8787；双击关闭入口可释放显存。", flush=True)

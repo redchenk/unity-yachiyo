@@ -44,6 +44,29 @@ export async function startDesktopServer({ resourceRoot, dataDir, services, port
       if (route.startsWith('/api/') && req.method !== 'GET' && !String(req.headers['content-type']).startsWith('application/json')) {
         return json(res, 415, { success: false, message: 'JSON is required' });
       }
+      if (route.startsWith('/api/speech-motion/')) {
+        const suffix = route.slice('/api/speech-motion'.length);
+        const backend = url.searchParams.get('backend') || avatarBridge.backend;
+        if (!['windows', 'ubuntu'].includes(backend) ||
+            !((req.method === 'POST' && suffix === '/jobs') ||
+              (req.method === 'GET' && suffix === '/health') ||
+              (['GET', 'DELETE'].includes(req.method) && /^\/jobs\/[a-f0-9]{24}$/.test(suffix)))) {
+          return json(res, 400, { error: 'Invalid speech motion route' });
+        }
+        const after = url.searchParams.get('after') || '0';
+        if (!/^\d{1,4}$/.test(after)) return json(res, 400, { error: 'Invalid frame cursor' });
+        const base = backend === 'windows' ? 'http://127.0.0.1:18787' : 'http://127.0.0.1:8787';
+        cancellation = requestSignal(req, res, 10000);
+        try {
+          const body = req.method === 'POST' ? JSON.stringify(await readJson(req, 2600000)) : undefined;
+          const upstream = await fetchImpl(`${base}/speech${suffix}${req.method === 'GET' ? `?after=${after}` : ''}`, {
+            method: req.method, headers: { 'Content-Type': 'application/json' }, body, signal: cancellation.signal
+          });
+          return await streamResponse(upstream, res);
+        } catch (error) {
+          return json(res, 503, { error: 'StreamTalk 动作服务未连接，请启动笔记本的动作服务并连接当前系统。' });
+        }
+      }
       if (route.startsWith('/api/live2d/') || route.startsWith('/api/bilibili/') || !route.startsWith('/api/')) {
         let next = false;
         await assets(req, res, () => { next = true; });

@@ -24,6 +24,7 @@ artifacts/*-rig.json
 
 .venv-ardy/
 models/
+/cache/
 
 # Local data, proprietary references, build products and diagnostics.
 /artifacts/

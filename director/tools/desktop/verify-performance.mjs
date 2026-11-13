@@ -31,6 +31,7 @@ try{
  const driver=window.TSUKUYOMI_AVATAR_DRIVER;
  const original=fetch, bytes=Uint8Array.from(atob('${bytes.toString('base64')}'),c=>c.charCodeAt(0));
  window.fetch=(url,options)=>String(url)==='/api/tts'?Promise.resolve(new Response(bytes,{headers:{'Content-Type':'audio/wav'}})):original(url,options);
+ localStorage.setItem('yachiyo:speechMotion','off');
  localStorage.setItem('roomTTSSettings',JSON.stringify({enabled:true,provider:'fixture',useProxy:true}));
  const speech=__avatarTools.createLive2DSpeechPlayer(),affect=__avatarTools.affectRuntime;
  driver.control('camera_reset'); await delay(600);post({phase:'idle'});await delay(350);

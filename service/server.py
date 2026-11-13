@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 import threading
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 from .motion import convert, write_motion
 
@@ -159,7 +159,7 @@ class Jobs:
         with self.lock: return dict(self.jobs[key]) if key in self.jobs else None
 
 
-def make_handler(jobs, hosted=None):
+def make_handler(jobs, hosted=None, speech=None):
     from .streams import Streams
     streams=Streams(jobs.provider,jobs.pool) if getattr(jobs.provider,"supports_stream",False) else None
     class Handler(BaseHTTPRequestHandler):
@@ -172,6 +172,16 @@ def make_handler(jobs, hosted=None):
             except (BrokenPipeError, ConnectionResetError): pass
         def do_GET(self):
             path = urlparse(self.path).path
+            if speech and path == "/speech/health":
+                return self.send(200, {"provider": "streamtalk", "state": speech.provider.state,
+                                      "model": speech.provider.model_name, "stats": speech.provider.stats})
+            match = re.fullmatch(r"/speech/jobs/([a-f0-9]{24})", path)
+            if speech and match:
+                try:
+                    after = int(parse_qs(urlparse(self.path).query).get("after", ["0"])[0])
+                    job = speech.get(match[1], after)
+                    return self.send(200 if job else 404, job or {"error": "Speech job expired"})
+                except ValueError: return self.send(400, {"error": "Invalid frame cursor"})
             active=hosted if hosted and path.startswith('/ardy/') else jobs
             if active is hosted:path=path[5:]
             if path == "/health":
@@ -184,12 +194,22 @@ def make_handler(jobs, hosted=None):
             if job["status"] != "done": return self.send(409, {"error": "Motion not ready"})
             return self.send(200, (active.cache/(match[1]+".json")).read_bytes())
         def do_DELETE(self):
+            match=re.fullmatch(r"/speech/jobs/([a-f0-9]{24})", self.path)
+            if speech and match:
+                speech.cancel(match[1]); return self.send(200, {"cancelled": True})
             match=re.fullmatch(r"/streams/([a-f0-9]{24})",self.path)
             if streams and match:
                 streams.close(match[1]);return self.send(200,{"closed":True})
             return self.send(404,{"error":"Not found"})
         def do_POST(self):
             path=self.path
+            if speech and path == "/speech/jobs":
+                try:
+                    length = int(self.headers.get("Content-Length", 0))
+                    if not 0 < length <= 2600000: return self.send(413, {"error": "Audio request too large"})
+                    return self.send(202, speech.submit(json.loads(self.rfile.read(length))))
+                except OverflowError: return self.send(429, {"error": "Speech motion service busy"})
+                except (ValueError, TypeError, UnicodeError): return self.send(400, {"error": "Expected 16 kHz mono PCM16, 0.05–60 seconds"})
             active=hosted if hosted and path.startswith('/ardy/') else jobs
             if active is hosted:path=path[5:]
             if streams and self.path.startswith("/streams"):

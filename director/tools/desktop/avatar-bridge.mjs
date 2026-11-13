@@ -62,7 +62,7 @@ export function attachAvatarBridge(server, { allowedOrigin = () => `http://127.0
       }
       if (msg.type !== 'command' || msg.sessionId !== sessionId || msg.epoch !== epoch || !Number.isSafeInteger(msg.seq) || msg.seq <= lastSeq) return;
       lastSeq = msg.seq;
-      if (!['perform', 'state', 'audio', 'mouth', 'cancel', 'control'].includes(msg.kind)) return;
+      if (!['perform', 'state', 'audio', 'mouth', 'motion', 'cancel', 'control'].includes(msg.kind)) return;
       if (msg.kind === 'cancel') { invalidate('director-cancel'); return; }
       const command = { type: 'command', kind: msg.kind, sessionId, epoch, seq: msg.seq,
         commandId: String(msg.commandId || '').slice(0, 96), turnId: String(msg.turnId || '').slice(0, 96),
@@ -89,5 +89,5 @@ export function attachAvatarBridge(server, { allowedOrigin = () => `http://127.0
     }, 5000);
     heartbeat.unref(); ws.on('close', () => clearInterval(heartbeat));
   });
-  return { close() { server.off('upgrade', upgrade); for (const client of wss.clients) client.terminate(); wss.close(); } };
+  return { get backend() { return capabilities?.selectedBackend || 'windows'; }, close() { server.off('upgrade', upgrade); for (const client of wss.clients) client.terminate(); wss.close(); } };
 }

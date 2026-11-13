@@ -30,6 +30,7 @@ namespace Yachiyo {
    Emotion(plan.emotion,Mathf.Clamp(plan.intensity,.15f,.8f),15000);emotionUntil=0;gazeUntil=0;
   }
   void AdvancePerformance(int ms){
+   if(avatar.NeuralSpeechMotion)return;
    if(speechPlan==null||fired==null)return;
    for(int i=0;i<fired.Length;i++){
     var cue=speechPlan.cues[i];
