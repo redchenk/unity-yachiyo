@@ -24,7 +24,7 @@ namespace Yachiyo {
   readonly Queue<Message> performances=new Queue<Message>();
   readonly HashSet<string> seen=new HashSet<string>();
   readonly Dictionary<Renderer,bool> hiddenRenderers=new Dictionary<Renderer,bool>();
-  readonly string[] actions={"wave","bow","nod","turn","head_tilt","shake_head","blink","smile","smirk","look_at_chat","look_away","walk","clap","dance","explain","open_palms","emphasis","lean_in","lean_left","lean_right","sway","breathe"};
+  readonly string[] actions={"wave","bow","nod","turn","shake_head","blink","smile","smirk","look_at_chat","look_away","walk","clap","dance","explain","open_palms","emphasis","lean_in","lean_left","lean_right","sway","breathe"};
   CancellationTokenSource lifetime;Task network;volatile bool transportConnected;bool wasConnected;
   string session="",utterance="";int epoch=-1,generation;long lastSeq;int mouthClock=-1;
   Message active;Coroutine execution;float emotionUntil,gazeUntil;Transform gaze;
@@ -38,9 +38,10 @@ namespace Yachiyo {
   }
   [Serializable]public class Behavior {public string type,side,target;public float durationMs,delayMs,intensity;}
   [Serializable]class Ready {public string type="ready";public Capabilities capabilities;}
-  [Serializable]class Capabilities {public string protocol="yachiyo-avatar/1";public bool humanoid,audioVisemes,serviceConnected;public int shapeCount;public string selectedBackend;public float cameraX,cameraY,cameraDistance,cameraYaw,cameraPitch;public bool cameraLocked;public string[] actions,emotions;public string motionBackend="model: wave/bow/turn/walk/clap/dance via existing Windows/Ubuntu service; local: explicit preview; nod/tilt/shake are local micro-gestures";}
+  [Serializable]class Capabilities {public string protocol="yachiyo-avatar/1";public bool humanoid,audioVisemes,serviceConnected;public int shapeCount;public string selectedBackend;public float cameraX,cameraY,cameraDistance,cameraYaw,cameraPitch;public bool cameraLocked;public string[] actions,emotions;public string motionBackend="model: wave/bow/turn/walk/clap/dance via existing Windows/Ubuntu service; local: explicit preview; explicit AI nod/shake/arm cues use local gestures; audio-conditioned neural motion is not connected";}
 
   void Start(){
+   avatar.followPointer=false;
    font=Resources.Load<Font>("NotoSansCJKsc-Regular");
    endpoint=PlayerPrefs.GetString("yachiyo.director.endpoint",endpoint);
    var args=Environment.GetCommandLineArgs();int p=Array.IndexOf(args,"--director-url");if(p>=0&&p+1<args.Length)endpoint=args[p+1];
@@ -135,7 +136,7 @@ namespace Yachiyo {
      Receipt(msg,"accepted");performances.Enqueue(msg);break;
     case "state":
      avatar.SetCharacterState(p.mode,p.emotion,p.holdMs);
-     if(active==null&&speechPlan==null){if(!string.IsNullOrEmpty(p.emotion))Emotion(p.emotion,.65f,p.holdMs);else if(p.mode=="thinking")Emotion("thinking",.35f,2400);else if(p.mode=="idle"||p.mode=="listening"){RestoreAffect();emotionUntil=0;}}
+     if(active==null&&speechPlan==null){if(!string.IsNullOrEmpty(p.emotion))Emotion(p.emotion,.65f,p.holdMs);else if(p.mode=="idle"||p.mode=="listening"){RestoreAffect();emotionUntil=0;}}
      break;
     case "audio":
      Debug.Log("DIRECTOR_AUDIO "+p.@event+" seq="+msg.seq+" current="+(msg.utteranceId==utterance));
@@ -166,7 +167,7 @@ namespace Yachiyo {
      body=true;began=Time.unscaledTime;
     }else switch(action.type){
      case "wave":case "bow":case "turn":ui.StopMotion(true);avatar.Act(action.type,action.type);body=true;break;
-     case "nod":case "head_tilt":case "shake_head":case "explain":case "open_palms":case "emphasis":case "lean_in":case "lean_left":case "lean_right":case "sway":case "breathe":
+     case "nod":case "shake_head":case "explain":case "open_palms":case "emphasis":case "lean_in":case "lean_left":case "lean_right":case "sway":case "breathe":
       avatar.Gesture(action.type,Mathf.Clamp(action.durationMs>0?action.durationMs:duration*1000,350,15000)/1000,action.intensity>0?action.intensity:Mathf.Max(.4f,p.intensity),action.side);break;
      case "blink":face.ForceBlink();break;
      case "smile":case "smirk":Emotion("happy",Mathf.Max(.5f,action.intensity),duration*1000);break;

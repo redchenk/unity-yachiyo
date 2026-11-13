@@ -568,7 +568,7 @@ export function behaviorBodyActionButtons() {
 }
 
 export function behaviorActionComboPrompt() {
-  if (typeof window !== 'undefined' && window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity') return 'Use connected Unity action ids. Match speech meaning with small immediate gestures: explain/emphasis for a point, open_palms for questions, nod for agreement, shake_head for refusal, head_tilt/lean_in for curiosity, sway for playful replies. Vary hands using side left/right. These gestures run locally with speech. Reserve wave/bow/turn/walk/clap/dance for explicit full-body intentions; at most one per performance. Do not request a full-body motion on every sentence.';
+  if (typeof window !== 'undefined' && window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity') return 'Use connected Unity action ids. Match speech meaning with small immediate gestures: explain/emphasis for a point, open_palms for questions, nod for agreement, shake_head for refusal, lean_in for curiosity, sway for playful replies. Vary hands using side left/right. These gestures run locally with speech. Reserve wave/bow/turn/walk/clap/dance for explicit full-body intentions; at most one per performance. Do not request a full-body motion on every sentence.';
   return 'happy: bounce + smile + nod + ear_wiggle; shy/smug: smirk + sway/head_tilt + lean_in; playful: tongue_out + smirk + ear_wiggle/hat_ear_wiggle; angry/fire: lean_in + emphasis/shake_head; sad: breathe + nod + sway; surprised: lean_in + bounce + blink + ear_perk. Vary the order and pick actions that match the emotion';
 }
 
@@ -577,6 +577,7 @@ export function semanticActionPromptCatalog() {
     'Semantic action ids for the actions array:',
     ...BEHAVIOR_ACTION_DEFINITIONS
       .filter((definition) => definition.prompt && definition.id !== 'reset')
+      .filter((definition) => typeof window === 'undefined' || window.TSUKUYOMI_AVATAR_DRIVER?.mode !== 'unity' || definition.id !== 'head_tilt')
       .filter((definition) => !definition.unityOnly || (typeof window !== 'undefined' && window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity'))
       .filter((definition) => typeof window === 'undefined' || window.TSUKUYOMI_AVATAR_DRIVER?.mode !== 'unity' || (window.TSUKUYOMI_AVATAR_CAPABILITIES?.actions || ['wave','bow','nod','turn','smile','blink','look_at_chat']).includes(definition.id))
       .map((definition) => `- ${definition.id}: ${definition.prompt}`)

@@ -15,17 +15,16 @@ namespace Yachiyo {
   public string PerformanceIntent {get;private set;}="neutral";
   public int PerformanceCuesFired {get;private set;}
   public int PerformanceClock=>mouthClock;
-  public float PerformanceGestureAmount {get;private set;}=1;
+  public float PerformanceGestureAmount {get;private set;}=0;
   public string PerformanceGaze {get;private set;}="camera";
   public string LastCue {get;private set;}="";
   public int LastCueClock {get;private set;}
   void StartPerformance(PerformancePlan plan){
    speechPlan=plan!=null&&plan.version==1?plan:null;
    avatar.EndConversationGesture();
-   if(speechPlan==null){avatar.SetConversationPerformance(1,.5f);return;}
+   if(speechPlan==null){PerformanceGestureAmount=0;return;}
    PerformanceIntent=plan.intent;PerformanceGaze=plan.gaze;
    PerformanceGestureAmount=Mathf.Clamp01(plan.gestureAmount);
-   avatar.SetConversationPerformance(PerformanceGestureAmount,Mathf.Clamp01(plan.energy));
    fired=new bool[Mathf.Min(plan.cues?.Length??0,3)];
    affectEmotion=plan.emotion;affectStrength=Mathf.Clamp(plan.intensity*.65f,.12f,.5f);affectAt=Time.unscaledTime;
    Emotion(plan.emotion,Mathf.Clamp(plan.intensity,.15f,.8f),15000);emotionUntil=0;gazeUntil=0;

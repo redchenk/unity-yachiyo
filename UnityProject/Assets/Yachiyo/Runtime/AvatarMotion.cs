@@ -6,7 +6,7 @@ namespace Yachiyo {
  [DefaultExecutionOrder(-100)]
  public partial class AvatarMotion : MonoBehaviour {
   public Animator animator;
-  public bool followPointer=true;
+  public bool followPointer=false;
   public string CurrentAction {get;private set;}="待机";
   public string MotionSource {get;private set;}="本地动作";
   public float Progress => clip==null?0:Mathf.Clamp01(clock/Mathf.Max(0.01f,clip.Duration));
@@ -133,10 +133,6 @@ namespace Yachiyo {
      RotateLocal(HumanBodyBones.Neck,new Vector3(7f*nod,0,0));
      RotateLocal(HumanBodyBones.Head,new Vector3(5f*nod,0,0));
      RotateLocal(HumanBodyBones.Chest,new Vector3(2f*nod,0,0));
-    }
-    if(localAction=="head_tilt"){
-     RotateLocal(HumanBodyBones.Neck,new Vector3(0,0,8f*envelope));
-     RotateLocal(HumanBodyBones.Head,new Vector3(0,0,8f*envelope));
     }
     if(localAction=="shake_head"){
      float shake=Mathf.Sin(actionTime*8f)*envelope;

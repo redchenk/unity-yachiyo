@@ -4,9 +4,11 @@ import { liveChatModelOptions } from '../../../shared/chat-model-options.mjs';
 import { boundedConversation, followupRetrievalQuery } from '../../../shared/retrieval-context.mjs';
 import { buildYachiyoCanonPrompt } from './yachiyoCanon';
 import {
-  inferLive2DIntentFromText,
+  inferLive2DIntentFromText as inferLegacyLive2DIntentFromText,
   normalizeLive2DIntent
 } from './live2dControl';
+// Unity accepts explicit AI decisions, never keyword-derived poses in spoken text.
+const inferLive2DIntentFromText = text => unityPerformance() ? null : inferLegacyLive2DIntentFromText(text);
 import {
   compileBehaviorIntent,
   semanticActionPromptCatalog
@@ -686,14 +688,8 @@ export function analyzeLive2DSentenceEmotion(text, fallbackEmotion = 'neutral') 
 
 function sentenceActionsForEmotion(emotion) {
   if (typeof window !== 'undefined' && window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity') {
-    const mood = normalizeEmotion(emotion);
-    const type = ['happy', 'smile', 'closed_smile'].includes(mood) ? 'explain'
-      : mood === 'surprised' ? 'open_palms'
-      : ['angry', 'fire'].includes(mood) ? 'emphasis'
-      : ['smug', 'shy', 'tongue'].includes(mood) ? 'head_tilt'
-      : ['sad', 'crying', 'watery_eyes', 'tear_drop'].includes(mood) ? 'nod' : 'breathe';
-    const supported = window.TSUKUYOMI_AVATAR_CAPABILITIES?.actions || ['look_at_chat', 'nod'];
-    return [{ type: 'look_at_chat', duration: 1.1 }, { type, duration: 1.3, delay: .1 }].filter(action => supported.includes(action.type));
+    // Unity waits for the AI plan; legacy emotion inference cannot add motions.
+    return [];
   }
   const actions = SENTENCE_ACTIONS_BY_EMOTION[normalizeEmotion(emotion)] || SENTENCE_ACTIONS_BY_EMOTION.neutral;
   return actions.map((action) => ({ ...action }));
@@ -1351,7 +1347,7 @@ export function live2DControlSystemPrompt() {
     'Yachiyo is being tested as an autonomous AI VTuber streamer: keep her present, reactive, playful, and concise.',
     'Return exactly one JSON object. Do not use Markdown. Do not add prose outside JSON.',
     'JSON schema:',
-    `{"reply":"short visible reply","acknowledgedIndexes":[],"emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"head_tilt","side":"right","duration":1.5}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"minecraft":null,"minecraftGoal":null,"memory_writes":[]}`,
+    `{"reply":"short visible reply","acknowledgedIndexes":[],"emotion":"${SEMANTIC_EMOTION_ID_LIST}","intensity":0.72,"actions":[{"type":"look_at_chat","duration":1.2},{"type":"smirk","duration":2.0},{"type":"nod","duration":1.0}],"interruptPolicy":{"mode":"blend","priority":4},"speech_style":{"speed":1.05,"pitch":0.08,"pause":"playful"},"music":null,"minecraft":null,"minecraftGoal":null,"memory_writes":[]}`,
     'The reply field must contain only natural dialogue. Never put stage directions, parenthesized action hints, asterisk actions, action labels, or pose descriptions in reply.',
     unityPerformance() ? 'In Unity use performance for speech delivery. Legacy actions may be empty. Quiet attentive replies are welcome.' : 'The actions field is required and must contain at least 2 semantic actions. If the moment is calm, use look_at_chat + breathe.',
     'Actions must match the reply meaning and mood. Vary action combos between turns; do not repeat the same body action unless the dialogue specifically calls for it.',

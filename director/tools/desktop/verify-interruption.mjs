@@ -77,6 +77,6 @@ try {
  const result = JSON.parse(fs.readFileSync(script + '.result.json', 'utf8'));
  fs.writeFileSync(path.join(output, 'interruption.json'), JSON.stringify({ ...result, phases }, null, 2));
  assert(result.passed, result.error); assert.equal(phases.reassuring.faceEmotion, 'ConcernedWarm'); assert.equal(phases.reassuring.gestureAmount, 0);
- assert.equal(phases.stopped.mouthOpen, 0); assert.equal(phases.stopped.speechBodyWeight, 0); assert.equal(phases.stopped.audioActive, false);
+ assert.equal(phases.stopped.mouthOpen, 0); assert.equal(phases.stopped.speechPlaybackWeight, 0); assert.equal(phases.stopped.audioActive, false);
  console.log(JSON.stringify({ passed: true, oldQueuedSpeechDropped: true, contextForwarded: result.context, plans: result.plans.map(p => p.intent) }));
 } finally { if (!exited) child.kill('SIGKILL'); fs.rmSync(temp, { recursive: true, force: true }); }

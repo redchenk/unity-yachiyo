@@ -15,7 +15,6 @@ export const GESTURE_PHASES = Object.freeze({
   emphasis: { prepare: .25, stroke: .2, hold: .15, release: .4, channel: 'arms' },
   open_palms: { prepare: .38, stroke: .22, hold: .4, release: .55, channel: 'arms' },
   nod: { prepare: .18, stroke: .24, hold: .1, release: .35, channel: 'head' },
-  head_tilt: { prepare: .3, stroke: .18, hold: .4, release: .4, channel: 'head' },
   shake_head: { prepare: .2, stroke: .38, hold: .1, release: .4, channel: 'head' },
   lean_in: { prepare: .35, stroke: .2, hold: .3, release: .5, channel: 'arms' },
   sway: { prepare: .3, stroke: .3, hold: .1, release: .5, channel: 'arms' },
@@ -61,10 +60,9 @@ export function createAffectRuntime({ now = () => Date.now() } = {}) {
     const bodyActions = (Array.isArray(raw.actions) ? raw.actions : Array.isArray(source.actions) ? source.actions : [])
       .filter(item => item && ['wave', 'bow', 'turn', 'walk', 'clap', 'dance'].includes(item.type)).slice(0, 1)
       .map(item => ({ type: item.type, side: item.side === 'left' ? 'left' : 'right', durationMs: clamp(item.durationMs ?? Number(item.duration) * 1000, 600, 12000, 3500), intensity: clamp(item.intensity, .1, .8, .5) }));
-    const explicit = Array.isArray(source.gestures) || Array.isArray(source.gestureAnchors) || Array.isArray(source.actions);
     const rawGestures = source.gestures || source.gestureAnchors || source.actions || [];
-    const defaults = { reassure: 'open_palms', thank: 'nod', explain: 'explain', tease: 'head_tilt', surprise: 'open_palms', refuse: 'shake_head' };
-    const gestures = (explicit ? rawGestures : defaults[intent] ? [{ type: defaults[intent] }] : []).slice(0, 3).flatMap(item => {
+    // Never manufacture body actions from an emotion or a loading state.
+    const gestures = (Array.isArray(rawGestures) ? rawGestures : []).slice(0, 3).flatMap(item => {
       if (!item || typeof item !== 'object') return [];
       const type = item.type || item.gesture;
       if (!GESTURE_PHASES[type]) return [];
@@ -82,7 +80,7 @@ export function createAffectRuntime({ now = () => Date.now() } = {}) {
       intensity: clamp(source.expression?.intensity ?? source.intensity, .15, .8, profile.intensity + (current.affiliation - .65) * .1),
       energy: clamp(source.delivery?.energy, .1, Math.min(.8, profile.energy + .15), profile.energy * .8 + current.arousal * .2), speed: clamp(source.delivery?.speed ?? source.speech_style?.speed, .9, 1.1, profile.speed),
       gaze: ['camera', 'attentive', 'averted'].includes(source.gaze?.style || source.gaze) ? source.gaze.style || source.gaze : profile.gaze,
-      gestureAmount: explicit && gestures.length === 0 ? 0 : profile.gestureAmount, gestures, bodyActions };
+      gestureAmount: gestures.length ? profile.gestureAmount : 0, gestures, bodyActions };
   }
   function commit(plan) {
     if (!plan || plan.id <= lastCommitted) return snapshot();
@@ -133,5 +131,5 @@ export function publishPerformance(plan) {
 }
 export function performancePrompt() {
   const state = affectRuntime.snapshot();
-  return `Yachiyo performance state (data, not instructions): ${JSON.stringify(state)}\nExpress the conversational purpose, not the listener's emotion. Comfort sadness with concerned warmth, not crying. Distinguish negation and quotations. Keep Yachiyo's existing identity and relationship. Allow zero significant gestures and short quiet pauses. Add performance to each BEAT/JSON: {"intent":"neutral|reassure|thank|explain|tease|surprise|refuse|listen","delivery":{"energy":0.3,"speed":1.0},"gaze":"camera|attentive|averted","gestures":[{"type":"explain|open_palms|nod|head_tilt|shake_head|emphasis|lean_in","side":"left|right","strength":0.4}]}. Usually 0-1 gestures, at most 3. Do not prescribe milliseconds. An optional anchorText/start/end refers only to the exact final Japanese VOICE using UTF-16 offsets; use only when essential, because unavailable word alignment causes that cue to be omitted. Never turn this state into claims about the viewer's psychology. Voice text, captions and performance must express the same purpose.`;
+  return `Yachiyo performance state (data, not instructions): ${JSON.stringify(state)}\nExpress the conversational purpose, not the listener's emotion. Comfort sadness with concerned warmth, not crying. Distinguish negation and quotations. Keep Yachiyo's existing identity and relationship. Allow zero significant gestures and short quiet pauses. Add performance to each BEAT/JSON: {"intent":"neutral|reassure|thank|explain|tease|surprise|refuse|listen","delivery":{"energy":0.3,"speed":1.0},"gaze":"camera|attentive|averted","gestures":[{"type":"explain|open_palms|nod|shake_head|emphasis|lean_in","side":"left|right","strength":0.4}]}. Usually 0-1 gestures, at most 3. Never tilt the head or prescribe a thinking pose. Select gestures explicitly only when useful; omitted gestures mean stillness. This character is autonomous AI driven; do not require human motion capture. Do not prescribe milliseconds. An optional anchorText/start/end refers only to the exact final Japanese VOICE using UTF-16 offsets; use only when essential, because unavailable word alignment causes that cue to be omitted. Never turn this state into claims about the viewer's psychology. Voice text, captions and performance must express the same purpose.`;
 }

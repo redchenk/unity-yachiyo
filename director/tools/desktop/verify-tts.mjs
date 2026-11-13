@@ -84,9 +84,9 @@ try {
  assert(result.passed, result.error);
  const native = JSON.parse(fs.readFileSync(nativeReport + '.json', 'utf8'));
  assert(native.mouthFrames > 10 && native.maxVisemes.some(value => value > 1), 'real Unity mouth did not follow playback');
- assert(native.maxSpeechBodyWeight > .9, 'actual installed page did not start the speech body layer');
+ assert(native.maxSpeechPlaybackWeight > .9, 'actual installed page did not start speech playback');
  assert(native.cuesFired > 0 && native.lastCue === 'explain', 'streaming BEAT did not reach the media-clock body gesture');
- assert.equal(native.speechBodyWeight, 0, 'speech body did not return to idle after stop');
+ assert.equal(native.speechPlaybackWeight, 0, 'speech playback did not return to idle after stop');
  assert.equal(native.mouthOpen, 0); assert(native.currentVisemeMax < 1, 'mouth did not close after stop');
  // No local endpoint, voice paths, credentials or spoken audio in the report.
  fs.writeFileSync(path.join(output, live ? 'live-provider.json' : 'stream-fixture.json'), JSON.stringify({ ...result, native }, null, 2));

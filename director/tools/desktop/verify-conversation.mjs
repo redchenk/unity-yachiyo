@@ -31,7 +31,7 @@ try{
  const speech=__avatarTools.createLive2DSpeechPlayer();
  driver.control('camera_lock',0);driver.control('camera_reset');await delay(600);post({phase:'idle'});await delay(400);
  let started=false;
- const play=speech.enqueue('こんにちは。',{performance:__avatarTools.affectRuntime.plan({intent:'explain'},'こんにちは。'),onStart:()=>{started=true;}});
+ const play=speech.enqueue('こんにちは。',{performance:__avatarTools.affectRuntime.plan({intent:'explain',gestures:[{type:'explain'}]},'こんにちは。'),onStart:()=>{started=true;}});
  await wait(()=>started,'speech not started');await delay(420);post({phase:'shortSpeech'});await delay(350);
  await play;await delay(650);post({phase:'speechEnded'});await delay(400);
  const parsed=__avatarTools.parseLive2DControlPayload(JSON.stringify({reply:'これは説明です。',actions:[{type:'explain',side:'left',duration:1.5}],emotion:'happy'}));
@@ -71,10 +71,10 @@ try {
  fs.writeFileSync(path.join(output, 'phases.json'), JSON.stringify({ phases, result }, null, 2));
  assert(result.passed, result.error);
  const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
- assert(phases.shortSpeech.speechBodyWeight > .8, 'short speech did not start body motion');
+ assert(phases.shortSpeech.speechPlaybackWeight > .8, 'short speech did not start playback');
  const armMovement = Math.max(distance(phases.idle.leftHand, phases.shortSpeech.leftHand), distance(phases.idle.rightHand, phases.shortSpeech.rightHand));
  assert(armMovement > .025, 'speech arms did not move at least 2.5 cm');
- for (const phase of ['speechEnded', 'cancelled']) { assert.equal(phases[phase].speechBodyWeight, 0); assert.equal(phases[phase].mouthOpen, 0); }
+ for (const phase of ['speechEnded', 'cancelled']) { assert.equal(phases[phase].speechPlaybackWeight, 0); assert.equal(phases[phase].mouthOpen, 0); }
  assert.equal(phases.explain.gesture, 'explain'); assert(phases.explain.localActionActive);
  assert.equal(phases.openPalms.gesture, 'open_palms'); assert(phases.openPalms.localActionActive);
  assert(result.receipts.filter(r => r.state === 'completed').length >= 2, 'semantic actions did not complete');

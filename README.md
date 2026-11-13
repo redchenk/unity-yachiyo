@@ -12,7 +12,7 @@
 - Unity 接收语义动作、情绪、眨眼、视线及原始 A/I/U/E/O 口型，不经过 Cubism 参数转换。
 - 实际音频开始播放时才启动表演；口型跟随音频时钟。暂停、拖动进度、结束和取消关闭旧口型。
 - Mac 内嵌播放器会逐句接收并补全 GPT-SoVITS 流式 WAV 的长度信息，再开始播放；可预取下一句。停止会取消尚未完成的音频下载。独立 Chromium 调试入口保留边接收边播放。
-- 身体动作默认走现有模型服务；「角色」页可以明确选择本地预览。挥手、鞠躬、转身、走路、鼓掌、跳舞可请求模型；点头、轻微摇头、歪头是本地微动作。
+- 身体动作默认走现有模型服务；「角色」页可以明确选择本地预览。挥手、鞠躬、转身、走路、鼓掌、跳舞可请求模型；AI 明确选择的点头、轻微摇头和交谈手势使用本地执行器；禁止歪头。
 - 回执包括 accepted / started / completed / cancelled / unsupported / failed。模型失败会显示失败，不会悄悄改播预览。
 - session、epoch、commandId、seq 和 utteranceId 隔离过期命令。取消、切换服务、断线重连不补播旧动作。
 - 隐藏、锁定、重置作用于真实 3D 场景。角色区域普通拖动移动位置，右键或 Shift + 拖动旋转，滚轮缩放。「角色」页也提供上下左右按钮、滑杆和缩放；构图位置与视角自动保存。
@@ -68,23 +68,19 @@ python -m unittest discover -s tests -v
 
 ## 本地动作与头发
 
-- 本地动作执行器改成带淡入淡出的多关节表演：挥手会带动肩、上臂、前臂、手腕、胸、颈、头和髋部重心；鞠躬、点头、歪头、摇头、转身也分别有躯干/颈部分担，不再是单根骨骼的固定角度。动作结束自动回待机。
+- 本地动作执行器改成带淡入淡出的多关节表演：挥手会带动肩、上臂、前臂、手腕、胸、颈、头和髋部重心；鞠躬、点头、摇头、转身也分别有躯干/颈部分担，不再是单根骨骼的固定角度。动作结束自动回待机。
 - 新增 `HairPhysics`：自动识别原模型的 `Acs_Twintail_*`、`Acs_SideHair_*`、`Acs_FrontHair_*` 链（当前 10 条链 / 32 根骨骼），用头部角速度做弹簧-阻尼滞后，并带轻微自然摆动；不接管身体动作，也不改头发网格。
 - 导演台动作的提交/取消/完成仍走 `DirectorBridge`：`perform` → `avatar.Act`（本地）或 `ui.RequestMotion`（动作服务）；取消走 `CancelPerformances` / `avatar.Act("idle")`；完成由 `Execute` 的持续时间和 `Receipt("completed")` 返回。Unity 端每帧执行，不存在批处理式迟到。
 - 动作服务（DiP/远端）返回的动作仍取决于服务本身；本地动作现在用于「角色 → 本地动作预览」和不需要远端服务的微动作。
 
 ## 对话时的角色表演
 
-- 导演台的 `tsukuyomi:live2d-character-state` 现在会通过 Unity driver 的 `state` 消息送到 `DirectorBridge`，再交给 `AvatarMotion.SetCharacterState`：
-  - `thinking`：轻微歪头、抬视线、思考表情；
-  - `listening`：面向观众、轻微点头和呼吸；
-  - `speaking`：真实音频开始后，双臂、手腕、胸、颈、头配合语音节拍和强弱动作；
-  - `idle`：回到待机。
-- `AvatarConversation` 直接跟随真实播放时钟，短句从开始就有轻量手势，不再等待定时器。暂停、结束、取消或音频帧超时后平滑回到待机；动作模型播放全身动作时，自动手臂层让出控制。
+- `thinking`、`listening` 等状态只表示交互进度，不触发歪头、点头或思考表情。统一应用关闭鼠标驱动头部；相机拖动与角色位置控件仍可手动使用。
+- 音频播放只提供真实口型与表演时钟，不自动叠加循环的手臂、胸、颈或头部动作。`performance.gestures` 缺省、为空、格式错误或只有禁用动作时，均不补默认手势。待机呼吸、眨眼与布料物理仍独立运行。
 - LLM 在同一次回复中输出 `performance`：安慰、感谢、解释、打趣、惊讶、克制拒绝或倾听。持续情绪在会话内跨句保留、随时间衰减，并进入下一次回复的提示；规则降级避免把“没有生气”“别哭，我陪你”演成愤怒或哭泣。
-- 表情、眼神、语速、身体幅度共用这份计划。`gestures: []` 会关闭显著手势及自动手臂摆动，保留眨眼、呼吸和轻微姿势变化；安慰时使用关切的柔和表情，感谢时有短暂移开视线。
-- `explain`、`open_palms`、`emphasis`、`nod`、`shake_head`、`head_tilt`、`lean_in` 等交谈手势在 Unity 就地执行，有准备、表达和收回阶段。身体和头部可同时执行，动作不再拉伸到整句长度。完整模型动作继续使用现有 Windows／Ubuntu 服务。
-- 一句语音结束后，属于该句的延迟动作不会继续排队播放。点头、歪头和摇头可叠加到模型动作，不再为这些微动作中断全身播放。
+- 表情、眼神、语速、身体幅度共用这份计划。`gestures: []` 表示无手势，保留眨眼、呼吸和轻微姿势变化；安慰时使用关切的柔和表情，感谢时有短暂移开视线。
+- `explain`、`open_palms`、`emphasis`、`nod`、`shake_head`、`lean_in` 等交谈手势只有 AI 明确输出时才在 Unity 就地执行，有准备、表达和收回阶段。身体和头部可同时执行，动作不再拉伸到整句长度。完整模型动作继续使用现有 Windows／Ubuntu 服务。
+- 一句语音结束后，属于该句的延迟动作不会继续排队播放。模型播放期间不叠加本地头部或手臂手势，避免破坏生成姿态。
 - 表情和视线在音频实际开始时生效，句末回到较淡的当前情绪，而非立即清空。口型继续走 `YachiyoFaceController.SetAudioMouth`。
 - 直接输入新消息或点麦克风会取消旧回复、音频预取和旧动作。全程语音输入可勾选「允许语音插话（建议戴耳机）」；默认仍防回声，勾选后用浏览器回声消除后的持续语音能量触发打断。麦克风仍需手动开启。
 
@@ -93,3 +89,7 @@ python -m unittest discover -s tests -v
 表演计划实机回归：`node director/tools/desktop/verify-performance.mjs`。实际页面插话回归：`node director/tools/desktop/verify-interruption.mjs`。两者使用固定回复/合成音频，结果保存在本机 `artifacts/performance-validation/`。
 
 短句动作与位置控件的实机回归：`node director/tools/desktop/verify-conversation.mjs`（先构建并安装统一应用）。
+
+当前为自主 AI 决策驱动，不需要摄像头、手机或真人动捕。需要区分：交谈手势仍是 AI 选择、Unity 执行的局部动作；DiP 是实际神经网络生成的文本动作；连续语音条件动作生成尚未接通。不能把前两者称为 StreamTalk 已部署。
+
+[StreamTalk 官方仓库](https://github.com/Xiangyue-Zhang/StreamTalk) 的公开推理链依赖模型权重、WavLM、BEAT2 检索数据及单独授权的 SMPL-X 模型。2026-11-13 检查的 Windows 安装只有 DiP/ARDY 目录和 8 GB RTX 3070 Laptop GPU；项目未下载这些外部数据、未做 StreamTalk 推理或显存性能验收。

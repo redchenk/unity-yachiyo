@@ -1,26 +1,37 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAffectRuntime, compilePerformanceTimeline, inferCommunicationIntent, performanceBodyIntent } from '../../../src/frontend/services/room/performancePlan.mjs';
+import { createAffectRuntime, compilePerformanceTimeline, inferCommunicationIntent, performanceBodyIntent, performancePrompt } from '../../../src/frontend/services/room/performancePlan.mjs';
 import { createVoiceInterruptionGate } from '../../../src/frontend/services/room/voiceInterruption.mjs';
 import { buildTtsRequest } from '../tts.mjs';
 
-test('six conversational purposes produce distinct face, voice, gaze and body profiles', () => {
+test('explicit AI plans control face, voice, gaze and allowed body cues', () => {
   const affect = createAffectRuntime();
   const cases = [
     ['ありがとう。うれしいよ。', 'thank', 'shy', 'nod'],
     ['泣いてもいいよ。そばにいるから。', 'reassure', 'concerned_warm', 'open_palms'],
     ['例えば、こういうことだよ。', 'explain', 'warm', 'explain'],
-    ['なんちゃって、冗談だよ。', 'tease', 'playful', 'head_tilt'],
+    ['なんちゃって、冗談だよ。', 'tease', 'playful', 'emphasis'],
     ['まさか、本当に？', 'surprise', 'surprised', 'open_palms'],
     ['それはお断りするね。', 'refuse', 'serious', 'shake_head']
   ];
   for (const [text, intent, emotion, gesture] of cases) {
-    const p = affect.plan({}, text), timeline = compilePerformanceTimeline(p, { duration: 4 });
+    const p = affect.plan({ performance: { intent, gestures: [{ type: gesture }] } }, text), timeline = compilePerformanceTimeline(p, { duration: 4 });
     assert.equal(p.intent, intent); assert.equal(p.emotion, emotion); assert.equal(timeline.cues[0].type, gesture);
     assert(timeline.cues[0].durationMs < 1800); assert(p.speed >= .9 && p.speed <= 1.1);
   }
   assert.equal(inferCommunicationIntent('我没有生气，别哭。'), 'reassure');
   assert.equal(inferCommunicationIntent('怒ってないよ。'), 'reassure');
+});
+
+test('missing, malformed and prohibited AI gestures never fall back to a body pose', () => {
+  const affect = createAffectRuntime();
+  for (const raw of [{}, { intent: 'tease' }, { intent: 'explain' }, { intent: 'thank', gestures: 'nod' }, { gestures: [{ type: 'head_tilt' }] }]) {
+    const p = affect.plan(raw, '考えているよ。ありがとう。');
+    assert.deepEqual(p.gestures, []); assert.equal(p.gestureAmount, 0);
+    assert.deepEqual(compilePerformanceTimeline(p, { duration: 8 }).cues, []);
+  }
+  assert(!performancePrompt().includes('head_tilt'));
+  assert(performancePrompt().includes('Never tilt the head'));
 });
 
 test('explicit quiet listening has no gestures; calming is not crying or arm flapping', () => {

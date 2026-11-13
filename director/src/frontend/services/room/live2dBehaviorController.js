@@ -145,6 +145,7 @@ function fallbackActionsForPayload(payload = {}, nested = {}) {
   if (isKnownBehaviorActionType(directAction)) {
     return [{ type: directAction, duration: directAction === 'blink' ? 0.36 : 1.6 }];
   }
+  if (typeof window !== 'undefined' && window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity') return [];
   return fallbackBehaviorActionsForText(payloadText(payload, nested));
 }
 
@@ -165,7 +166,8 @@ export function compileBehaviorIntent(payload = {}) {
       intensity: payload.intensity ?? nested.intensity ?? 0.68
     });
   }
-  const presetActions = semanticExpressionBehaviorActions(expression || emotion, {
+  const autonomousUnity = typeof window !== 'undefined' && window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity';
+  const presetActions = autonomousUnity ? [] : semanticExpressionBehaviorActions(expression || emotion, {
     existingActions: actions,
     intensity: payload.intensity ?? nested.intensity ?? 0.72,
     limit: Math.max(0, 5 - actions.length)
