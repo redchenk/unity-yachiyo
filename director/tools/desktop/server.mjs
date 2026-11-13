@@ -47,7 +47,7 @@ export async function startDesktopServer({ resourceRoot, dataDir, services, port
       if (route.startsWith('/api/speech-motion/')) {
         const suffix = route.slice('/api/speech-motion'.length);
         const backend = url.searchParams.get('backend') || avatarBridge.backend;
-        if (!['windows', 'ubuntu'].includes(backend) ||
+        if (!['windows', 'ubuntu', 'desktop'].includes(backend) ||
             !((req.method === 'POST' && suffix === '/jobs') ||
               (req.method === 'GET' && suffix === '/health') ||
               (['GET', 'DELETE'].includes(req.method) && /^\/jobs\/[a-f0-9]{24}$/.test(suffix)))) {
@@ -55,7 +55,7 @@ export async function startDesktopServer({ resourceRoot, dataDir, services, port
         }
         const after = url.searchParams.get('after') || '0';
         if (!/^\d{1,4}$/.test(after)) return json(res, 400, { error: 'Invalid frame cursor' });
-        const base = backend === 'windows' ? 'http://127.0.0.1:18787' : 'http://127.0.0.1:8787';
+        const base = { windows: 'http://127.0.0.1:18787', ubuntu: 'http://127.0.0.1:8787', desktop: 'http://127.0.0.1:28787' }[backend];
         cancellation = requestSignal(req, res, 10000);
         try {
           const body = req.method === 'POST' ? JSON.stringify(await readJson(req, 2600000)) : undefined;
@@ -64,7 +64,7 @@ export async function startDesktopServer({ resourceRoot, dataDir, services, port
           });
           return await streamResponse(upstream, res);
         } catch (error) {
-          return json(res, 503, { error: 'StreamTalk 动作服务未连接，请启动笔记本的动作服务并连接当前系统。' });
+          return json(res, 503, { error: 'StreamTalk 动作服务未连接，请启动所选电脑的动作服务并重连。' });
         }
       }
       if (route.startsWith('/api/live2d/') || route.startsWith('/api/bilibili/') || !route.startsWith('/api/')) {

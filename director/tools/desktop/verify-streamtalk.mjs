@@ -10,7 +10,9 @@ import assert from 'node:assert/strict';
 const root=path.resolve(import.meta.dirname,'../..'),project=path.dirname(root);
 const wavFile=process.argv[2];
 if(!wavFile)throw Error('Usage: node tools/desktop/verify-streamtalk.mjs /absolute/path/spoken.wav');
-const bytes=fs.readFileSync(wavFile),output=path.join(project,'artifacts/streamtalk-native');fs.mkdirSync(output,{recursive:true});
+const backend=process.env.YACHIYO_VERIFY_BACKEND || 'windows';
+assert(['windows','ubuntu','desktop'].includes(backend),'Unknown verification backend');
+const bytes=fs.readFileSync(wavFile),output=path.join(project,backend==='windows'?'artifacts/streamtalk-native':`artifacts/streamtalk-native-${backend}`);fs.mkdirSync(output,{recursive:true});
 const temp=fs.mkdtempSync(path.join(os.tmpdir(),'yachiyo-streamtalk-'));
 const script=path.join(output,'browser-test.js'),nativeReport=path.join(output,'native');
 const built=await build({configFile:false,logLevel:'error',build:{write:false,lib:{entry:path.join(root,'tools/desktop/avatar-browser-entry.mjs'),formats:['iife'],name:'AvatarFixture'}}});
@@ -23,14 +25,15 @@ const result={passed:false,motionStatuses:[],jobs:[],audioTimes:[]};let speech;
 try{
  await wait(()=>window.TSUKUYOMI_AVATAR_DRIVER?.ready,'avatar not ready');
  document.querySelector('.studio-settings-header button')?.click();
- const driver=window.TSUKUYOMI_AVATAR_DRIVER;driver.control('backend','windows');driver.control('camera_reset');await delay(600);
+ const driver=window.TSUKUYOMI_AVATAR_DRIVER;driver.control('backend',${JSON.stringify(backend)});driver.control('camera_reset');await delay(600);
  localStorage.setItem('yachiyo:speechMotion','on');
  localStorage.setItem('roomTTSSettings',JSON.stringify({enabled:true,provider:'fixture',useProxy:true}));
  const original=fetch,bytes=Uint8Array.from(atob('${bytes.toString('base64')}'),c=>c.charCodeAt(0));
  window.fetch=async(url,options)=>{
   if(String(url)==='/api/tts')return new Response(bytes,{headers:{'Content-Type':'audio/wav'}});
+  const requestedAt=performance.now();
   const r=await original(url,options);
-  if(String(url).includes('/api/speech-motion/jobs')&&options?.method==='POST')result.jobs.push(await r.clone().json());
+  if(String(url).includes('/api/speech-motion/jobs')&&options?.method==='POST')result.jobs.push({...await r.clone().json(),requestedAt});
   return r;
  };
  window.addEventListener('yachiyo:speech-motion',e=>result.motionStatuses.push(e.detail));
@@ -44,8 +47,8 @@ try{
  audio.pause();await delay(400);post({phase:'paused0',audioTime:audio.currentTime});await delay(400);post({phase:'paused1',audioTime:audio.currentTime});await delay(220);
  await audio.play();await delay(700);post({phase:'resumed',audioTime:audio.currentTime});await delay(220);
  await play;await delay(650);post({phase:'ended'});await delay(250);
- const continuation=speech.enqueue('続けて話します。',{sourceLang:'ja'});
- let second=false;const cancelled=speech.enqueue('途中で停止します。',{sourceLang:'ja',onStart:()=>{second=true;}}).catch(e=>e.name);
+ const continuation=speech.enqueue('続けて話します。',{sourceLang:'ja',onStart:({audio})=>{audio.addEventListener('ended',()=>{result.joinEndedAt=performance.now();},{once:true});}});
+ let second=false;const cancelled=speech.enqueue('途中で停止します。',{sourceLang:'ja',interTurnPauseMs:2000,onStart:()=>{second=true;result.nextStartedAt=performance.now();}}).catch(e=>e.name);
  await continuation;await delay(200);post({phase:'joining'});await delay(220);
  await wait(()=>second,'second speech never started');await delay(500);speech.stop();
  if(await cancelled!=='AbortError')throw Error('Cancellation did not reject old speech');
@@ -58,7 +61,7 @@ post({...result,done:true});
 })();`);
 for(const file of [script+'.progress.json',script+'.result.json',nativeReport+'.json'])fs.rmSync(file,{force:true});
 const binary=process.env.YACHIYO_UNITY_BINARY||path.join(os.homedir(),'Applications/Yachiyo Motion Studio.app/Contents/MacOS/Yachiyo Motion Studio');
-const child=spawn(binary,['--no-auto-connect','--motion-platform','windows','--verify-director',nativeReport,'--verify-web-script',script,'-logFile',path.join(output,'player.log')],{stdio:'ignore',env:{...process.env,YACHIYO_DATA_DIR:temp}});
+const child=spawn(binary,['--no-auto-connect','--motion-platform',backend,'--verify-director',nativeReport,'--verify-web-script',script,'-logFile',path.join(output,'player.log')],{stdio:'ignore',env:{...process.env,YACHIYO_DATA_DIR:temp}});
 let exited=false;child.on('exit',()=>exited=true);
 const phases={},start=Date.now();
 try{
@@ -81,10 +84,13 @@ try{
  assert(Math.abs(phases.paused0.neuralClock-phases.paused1.neuralClock)<.04,'Motion advanced while paused');
  assert(Math.abs(phases.paused0.renderedClock-phases.paused1.renderedClock)<.001,'Interpolated motion advanced while paused');
  assert(phases.resumed.neuralClock>phases.paused1.neuralClock+.3,'Motion did not resume with audio');
- assert(phases.joining.awaitingContinuation,'Queued speech did not retain continuation intent');
- assert.equal(phases.joining.poseMode,'joining','Returned to idle while the next utterance was preparing');
+ assert(result.jobs[2].requestedAt<result.joinEndedAt-500,'Next GPU job was not submitted during current playback');
+ assert(result.motionStatuses.some(s=>s.prefetch&&s.status==='ready'),'No prefetched neural window');
+ assert(result.nextStartedAt-result.joinEndedAt>=0&&result.nextStartedAt-result.joinEndedAt<400,'Queued audio/motion handoff exceeded 400 ms');
+ assert.equal(phases.joining.poseMode,'model','Buffered next utterance did not continue immediately');
+ assert.equal(phases.joining.neuralUnderruns,0,'Motion underrun at utterance handoff');
  assert.equal(phases.cancelled.idleDuringContinuationFrames,0,'Queued generated speech passed through idle');
  for(const name of ['ended','cancelled']){assert.equal(phases[name].neuralSpeechMotion,false);assert.equal(phases[name].bodyPlaying,false);assert.equal(phases[name].audioActive,false);}
- console.log('PASS: real StreamTalk inference → WKWebView audio → Unity media-clock body, pause, resume and cancel');
+ console.log('PASS: real StreamTalk inference → WKWebView audio → Unity media-clock body, queued prefetch, continuous handoff, pause, resume and cancel');
  console.log(path.join(output,'result.json'));
 }finally{if(!exited)child.kill('SIGTERM');}

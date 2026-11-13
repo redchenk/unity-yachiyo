@@ -64,6 +64,8 @@ test('speech owns immediate audio motion and drops delayed gestures after a shor
   const { url, messages } = await fixture(t); let status;
   const driver = createUnityAvatarDriver({ url: `${url}?role=director`, WebSocketClass: WebSocket, events: new EventTarget(), onStatus: s => status = s });
   t.after(() => driver.dispose()); await until(() => status?.ready);
+  assert.equal(driver.state({ mode: 'thinking', emotion: 'sad' }), null);
+  await delay(30); assert(!messages.some(m => m.kind === 'state'), 'loading must not impose a preparation pose');
   driver.state({ mode: 'speaking', emotion: 'happy' });
   const audio = { currentTime: 0 };
   driver.audioStart(audio);

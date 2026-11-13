@@ -20,7 +20,8 @@ export async function prepareSpeechMotion(buffer, { backend='windows', cancelled
   if (!buffer || buffer.duration < .05 || buffer.duration > 60) throw new Error('StreamTalk 支持 0.05–60 秒的单段语音');
   let id='', stopped=false, cursor=0, complete=false, sending=false;
   const chunks=[], controller=new AbortController();
-  const query=`backend=${backend === 'ubuntu' ? 'ubuntu' : 'windows'}`;
+  if (!['windows','ubuntu','desktop'].includes(backend)) throw new Error('未知动作服务');
+  const query=`backend=${backend}`;
   const request = async (suffix, options={}) => {
     if (cancelled() || stopped) throw new DOMException('Speech motion cancelled','AbortError');
     const response = await fetchImpl(`/api/speech-motion${suffix}${suffix.includes('?')?'&':'?'}${query}`, {
@@ -50,7 +51,7 @@ export async function prepareSpeechMotion(buffer, { backend='windows', cancelled
     const deadline=Date.now()+180000;
     while(!chunks.length){
       await poll();
-      if(Date.now()>deadline)throw new Error('StreamTalk 首段生成超时，请检查笔记本服务');
+      if(Date.now()>deadline)throw new Error('StreamTalk 首段生成超时，请检查所选电脑的服务');
       if(!chunks.length)await new Promise(resolve=>setTimeout(resolve,100));
     }
     report({status:'ready',model:'StreamTalk',seconds:chunks[0].generationSeconds});

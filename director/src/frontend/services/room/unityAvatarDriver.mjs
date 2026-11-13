@@ -52,7 +52,7 @@ export function createUnityAvatarDriver({ url, onStatus = () => {}, onReceipt = 
     }
     return { ...intent, commandIds };
   }
-  function state(detail = {}) { const emotion = detail.emotion || ''; if (emotion) lastEmotion = emotion; return send('state', { mode: detail.mode || 'idle', emotion, holdMs: Math.min(15000, Number(detail.holdMs) || 0) }); }
+  function state(detail = {}) { if (detail.mode === 'thinking') return null; const emotion = detail.emotion || ''; if (emotion) lastEmotion = emotion; return send('state', { mode: detail.mode || 'idle', emotion, holdMs: Math.min(15000, Number(detail.holdMs) || 0) }); }
   function audioStart(audio, { source = 'speech', turnId = '', performance = null, neuralMotion = false } = {}) {
     if (!ready) return;
     let token = audioIds.get(audio);

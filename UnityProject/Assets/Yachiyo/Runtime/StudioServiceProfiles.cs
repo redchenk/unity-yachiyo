@@ -8,28 +8,29 @@ using UnityEngine.Networking;
 namespace Yachiyo {
  public partial class StudioUI {
   public string SelectedBackend {get;private set;}="ubuntu";
-  public string BackendLabel=>SelectedBackend=="windows"?"Windows":"Ubuntu";
+  public string BackendLabel=>SelectedBackend=="desktop"?"台式机 Windows":SelectedBackend=="windows"?"笔记本 Windows":"笔记本 Ubuntu";
   public bool ServiceConnected {get;private set;}
   public bool ConnectingBackend {get;private set;}
   public string LastHealthBackend {get;private set;}="";
   public string ServiceStatus=>serviceStatus;
   int connectionVersion;
   bool advancedService,serviceFocusRequested;
-  static string DefaultServiceUrl(string backend)=>backend=="windows"?"http://127.0.0.1:18787":"http://127.0.0.1:8787";
+  public static bool IsMotionBackend(string backend)=>backend=="windows"||backend=="ubuntu"||backend=="desktop";
+  static string DefaultServiceUrl(string backend)=>backend=="desktop"?"http://127.0.0.1:28787":backend=="windows"?"http://127.0.0.1:18787":"http://127.0.0.1:8787";
   static string ProfileKey(string backend)=>"motion-service-"+backend;
   static string ConnectionState(string backend)=>Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Personal),"Library","Application Support","Tsukuyomi","MotionConnections",backend+".status");
   void InitializeServiceProfiles(string[] args){
    string legacy=PlayerPrefs.GetString("motion-service",serviceUrl);
    SelectedBackend=PlayerPrefs.GetString("motion-backend",legacy.Contains(":18787")?"windows":"ubuntu");
-   if(SelectedBackend!="windows")SelectedBackend="ubuntu";
+   if(!IsMotionBackend(SelectedBackend))SelectedBackend="ubuntu";
    serviceUrl=PlayerPrefs.GetString(ProfileKey(SelectedBackend),PlayerPrefs.HasKey("motion-backend")?DefaultServiceUrl(SelectedBackend):legacy);
-   int platform=Array.IndexOf(args,"--motion-platform");if(platform>=0&&platform+1<args.Length){SelectedBackend=args[platform+1]=="windows"?"windows":"ubuntu";serviceUrl=PlayerPrefs.GetString(ProfileKey(SelectedBackend),DefaultServiceUrl(SelectedBackend));}
+   int platform=Array.IndexOf(args,"--motion-platform");if(platform>=0&&platform+1<args.Length){SelectedBackend=IsMotionBackend(args[platform+1])?args[platform+1]:"ubuntu";serviceUrl=PlayerPrefs.GetString(ProfileKey(SelectedBackend),DefaultServiceUrl(SelectedBackend));}
    int endpoint=Array.IndexOf(args,"--service-url");if(endpoint>=0&&endpoint+1<args.Length)serviceUrl=args[endpoint+1].TrimEnd('/');
    if(Array.IndexOf(args,"--show-service-settings")>=0){settings=true;serviceFocusRequested=true;}
    if(Array.IndexOf(args,"--no-auto-connect")<0&&endpoint<0)StartCoroutine(ConnectSelectedService());
   }
   public void SelectBackend(string backend,bool connect=true){
-   if(backend!="windows"&&backend!="ubuntu")throw new ArgumentException("Unknown motion backend");
+   if(!IsMotionBackend(backend))throw new ArgumentException("Unknown motion backend");
    // StopMotion invalidates generation, pending session creation and queued poses
    // before the endpoint changes. CloseStream retains the old endpoint for DELETE.
    StopMotion();connectionVersion++;ConnectingBackend=false;ServiceConnected=false;LastHealthBackend="";
@@ -51,7 +52,7 @@ namespace Yachiyo {
       PlayerPrefs.SetString(ProfileKey(backend),endpoint);PlayerPrefs.SetString("motion-service",endpoint);PlayerPrefs.Save();yield break;
      }
     }
-    if(showFailure)serviceStatus=BackendLabel+" 未连接，请确认笔记本系统及动作服务已开启。";
+    if(showFailure)serviceStatus=BackendLabel+" 未连接，请确认目标电脑及动作服务已开启。";
    }
   }
   IEnumerator CheckService(){if(!ValidUrl())yield break;int version=++connectionVersion;ConnectingBackend=false;yield return ProbeService(version,serviceUrl,true);}
@@ -61,7 +62,7 @@ namespace Yachiyo {
    yield return ProbeService(version,endpoint,false);
    if(version!=connectionVersion)yield break;
    if(ServiceConnected){ConnectingBackend=false;yield break;}
-   if(!allowHelper||endpoint!=DefaultServiceUrl(backend)||Application.platform!=RuntimePlatform.OSXPlayer){ConnectingBackend=false;serviceStatus=BackendLabel+" 未连接，请确认笔记本系统及动作服务已开启。";yield break;}
+   if(!allowHelper||endpoint!=DefaultServiceUrl(backend)||Application.platform!=RuntimePlatform.OSXPlayer){ConnectingBackend=false;serviceStatus=BackendLabel+" 未连接，请确认目标电脑及动作服务已开启。";yield break;}
    string helper=Path.Combine(Application.streamingAssetsPath,"ServiceTools",backend+".command");
    string state=ConnectionState(backend);
    try{
@@ -77,8 +78,8 @@ namespace Yachiyo {
     yield return ProbeService(version,endpoint,false);if(version!=connectionVersion)yield break;
     if(ServiceConnected){ConnectingBackend=false;yield break;}
     string result="";try{if(File.Exists(state))result=File.ReadAllText(state).Trim();}catch(IOException){}
-    if(result=="service_off"){ConnectingBackend=false;serviceStatus=BackendLabel+" 通道已连接，请先在笔记本启动动作服务，然后点「重连」。";yield break;}
-    if(result=="failed"){ConnectingBackend=false;serviceStatus=BackendLabel+" 连接失败，请确认笔记本已启动到 "+BackendLabel+"，并完成终端登录。";yield break;}
+    if(result=="service_off"){ConnectingBackend=false;serviceStatus=BackendLabel+" 通道已连接，请先在目标电脑启动动作服务，然后点「重连」。";yield break;}
+    if(result=="failed"){ConnectingBackend=false;serviceStatus=BackendLabel+" 连接失败，请确认目标电脑和系统，并完成终端登录。";yield break;}
    }
    if(version==connectionVersion){ConnectingBackend=false;serviceStatus=BackendLabel+" 尚未连接。完成终端登录后可点击「重连」。";}
   }
@@ -90,12 +91,13 @@ namespace Yachiyo {
    if(Button(new Rect(x+pw-116,y+12,98,28),advancedService?"收起地址":"高级地址"))advancedService=!advancedService;
    if(Button(new Rect(x+18,y+52,136,34),(SelectedBackend=="windows"?"✓  ":"")+"Windows  1",SelectedBackend=="windows"))SelectBackend("windows");
    if(Button(new Rect(x+166,y+52,136,34),(SelectedBackend=="ubuntu"?"✓  ":"")+"Ubuntu  2",SelectedBackend=="ubuntu"))SelectBackend("ubuntu");
+   if(Button(new Rect(x+314,y+52,136,34),(SelectedBackend=="desktop"?"✓  ":"")+"台式机  3",SelectedBackend=="desktop"))SelectBackend("desktop");
    if(Button(new Rect(x+pw-166,y+52,148,34),ConnectingBackend?"重新连接":"重连"))StartCoroutine(ConnectSelectedService());
    Text(x+18,y+96,pw-36,38,serviceStatus,small);
    float shift=advancedService?42:0;
    if(advancedService){GUI.SetNextControlName("service-url");string edited=GUI.TextField(new Rect(x+18,y+136,pw-176,32),serviceUrl,200,input);if(edited!=serviceUrl){StopMotion();connectionVersion++;ConnectingBackend=false;ServiceConnected=false;serviceUrl=edited;serviceStatus="地址已更改，请检查连接。";}if(Button(new Rect(x+pw-140,y+136,122,32),"检查连接"))StartCoroutine(CheckService());}
    if(Button(new Rect(x+18,y+140+shift,207,32),hostedArdy?"ARDY 在线片段":"DiP 连续实时")){StopMotion();connectionVersion++;hostedArdy=!hostedArdy;ServiceConnected=false;StartCoroutine(CheckService());}
-   Text(x+240,y+144+shift,pw-260,30,hostedArdy?"公共在线生成，需等待片段。":"根据动作指令在笔记本持续生成。",small);
+   Text(x+240,y+144+shift,pw-260,30,hostedArdy?"公共在线生成，需等待片段。":"根据动作指令在所选电脑持续生成。",small);
    Text(x+18,y+184+shift,90,26,"微笑",small);avatar.expression=GUI.HorizontalSlider(new Rect(x+100,y+192+shift,pw-130,20),avatar.expression,0,1);
    if(clothing){
     if(Button(new Rect(x+18,y+222+shift,182,32),clothing.simulationEnabled?"布料：开  F7":"布料：关  F7"))clothing.SetSimulation(!clothing.simulationEnabled);

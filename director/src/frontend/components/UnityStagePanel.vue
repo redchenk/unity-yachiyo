@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue';
 const speechMotion=ref(localStorage.getItem('yachiyo:speechMotion')!=='off');
 const speechStatus=ref('随语音生成');
 const saveSpeechMotion=()=>{localStorage.setItem('yachiyo:speechMotion',speechMotion.value?'on':'off');if(!speechMotion.value)window.dispatchEvent(new CustomEvent('yachiyo:avatar-stop'));};
-const motionStatus=event=>{const d=event.detail;speechStatus.value=d.status==='loading'?'正在生成首段动作…':d.status==='ready'?'语音动作已就绪':d.error || '随语音生成';};
+const motionStatus=event=>{const d=event.detail;speechStatus.value=d.status==='loading'?(d.prefetch?'正在准备下一句动作…':'正在生成首段动作…'):d.status==='ready'?(d.prefetch?'下一句动作已缓冲':'语音动作已就绪'):d.error || '随语音生成';};
 onMounted(()=>window.addEventListener('yachiyo:speech-motion',motionStatus));
 onUnmounted(()=>window.removeEventListener('yachiyo:speech-motion',motionStatus));
 const bodyMode=ref(localStorage.getItem('yachiyo:avatar:bodyMode') || 'model');
@@ -28,7 +28,7 @@ const move = (axis,amount) => control('camera_'+axis,Math.max(-.65,Math.min(.65,
     <label class="speech-motion-setting"><input type="checkbox" v-model="speechMotion" @change="saveSpeechMotion">StreamTalk 语音驱动动作</label>
     <div v-if="speechMotion" class="speech-motion-status" role="status">{{ speechStatus }}</div>
     <label v-if="capabilities?.selectedBackend" style="font-size:12px;display:block;margin-top:8px">动作服务
-      <select :value="capabilities.selectedBackend" aria-label="动作服务系统" @change="selectBackend"><option value="windows">Windows</option><option value="ubuntu">Ubuntu</option></select>
+      <select :value="capabilities.selectedBackend" aria-label="动作服务系统" @change="selectBackend"><option value="desktop">台式机 Windows · AMD</option><option value="windows">笔记本 Windows · NVIDIA</option><option value="ubuntu">笔记本 Ubuntu · NVIDIA</option></select>
       <button type="button" @click="reconnect">重连</button>
       {{ capabilities.serviceConnected ? '已连接' : '待连接' }}
     </label>

@@ -1112,6 +1112,7 @@ function upsertLogLine(id, role, text, meta = {}) {
 }
 
 function dispatchCharacterState(mode, detail = {}) {
+  if (mode === 'thinking' && window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity') return;
   window.dispatchEvent(new CustomEvent(CHARACTER_STATE_EVENT, {
     detail: { mode, ...detail }
   }));

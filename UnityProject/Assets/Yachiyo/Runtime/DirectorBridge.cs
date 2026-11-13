@@ -121,7 +121,7 @@ namespace Yachiyo {
      if(p.action=="camera_x")ui.SetDirectorFraming(p.value,ui.DirectorFraming.y);
      if(p.action=="camera_y")ui.SetDirectorFraming(ui.DirectorFraming.x,p.value);
      if(p.action=="camera_zoom")ui.ZoomDirectorCamera(p.value);
-     if(p.action=="backend"&&(p.text=="windows"||p.text=="ubuntu"))ui.SelectBackend(p.text);
+     if(p.action=="backend"&&StudioUI.IsMotionBackend(p.text))ui.SelectBackend(p.text);
      if(p.action=="reconnect")ui.ReconnectDirectorService();
      SendReady();
      break;

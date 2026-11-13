@@ -16,7 +16,7 @@
 - 回执包括 accepted / started / completed / cancelled / unsupported / failed。模型失败会显示失败，不会悄悄改播预览。
 - session、epoch、commandId、seq 和 utteranceId 隔离过期命令。取消、切换服务、断线重连不补播旧动作。
 - 隐藏、锁定、重置作用于真实 3D 场景。角色区域普通拖动移动位置，右键或 Shift + 拖动旋转，滚轮缩放。「角色」页也提供上下左右按钮、滑杆和缩放；构图位置与视角自动保存。
-- Windows／Ubuntu 选择位于右侧「角色」页，沿用现有 SSH 隧道与服务配置。
+- 右侧「角色」页可选择台式机 Windows（AMD）、笔记本 Windows（NVIDIA）或笔记本 Ubuntu；分别保存连接配置。
 - 本次保留现有肩袖、布料、面部光照与角色资产，没有重新修改服装结构。
 
 ## 本机启动
@@ -75,7 +75,7 @@ python -m unittest discover -s tests -v
 
 ## 对话时的角色表演
 
-- `thinking`、`listening` 等状态只表示交互进度，不触发歪头、点头或思考表情。统一应用关闭鼠标驱动头部；相机拖动与角色位置控件仍可手动使用。
+- 3D 模式直接忽略语音加载和回复生成期间的 `thinking` 通知，不在每句开头插入准备／思考动作；排队语音不再额外加入回复间隔。`listening` 等状态只表示交互进度。统一应用关闭鼠标驱动头部；相机拖动与角色位置控件仍可手动使用。
 - StreamTalk 使用最终实际播放的音频生成动作，不叠加循环的手臂、胸、颈或头部动作。关闭 StreamTalk 时，音频只提供口型与表演时钟。`performance.gestures` 缺省、为空、格式错误或只有禁用动作时，均不补默认手势。待机呼吸、眨眼与布料物理仍独立运行。
 - LLM 在同一次回复中输出 `performance`：安慰、感谢、解释、打趣、惊讶、克制拒绝或倾听。持续情绪在会话内跨句保留、随时间衰减，并进入下一次回复的提示；规则降级避免把“没有生气”“别哭，我陪你”演成愤怒或哭泣。
 - 表情、眼神、语速、身体幅度共用这份计划。关闭 StreamTalk 时，`gestures: []` 表示不执行局部手势，保留眨眼、呼吸和轻微姿势变化；安慰时使用关切的柔和表情，感谢时有短暂移开视线。
@@ -94,16 +94,16 @@ python -m unittest discover -s tests -v
 
 已接入实际 StreamTalk 网络：最终 TTS 音频 → WavLM → 动作生成 → 检索关键姿态 → 动作细化 → Unity 身体和手指。脸部情绪继续由对话计划驱动，口型继续来自实际音频；没有把 FLAME 的 100 维输出直接冒充八千代表情。
 
-每个模型窗口为 60 帧、30 FPS，保留 8 帧用于与下一段融合。首段准备好后播放语音，后续分段生成；Unity 以音频媒体时间采样动作。暂停保持姿态，恢复接续；取消、切换系统和断线丢弃过期帧。若生成赶不上播放，会保持最后一个生成姿态并记录欠载，不会用预设动作填充。
+每个模型窗口为 60 帧、30 FPS，保留 8 帧用于与下一段融合。首段准备好后播放语音，后续分段生成；当前句播放期间，同时预取下一句语音并预生成它的首个动作窗口，切句时复用已有缓冲，不再重新提交同一任务。只提前准备下一句动作，最多占用两个 GPU 任务槽；取消、队列过期、优先级变化或切换电脑会清理对应预取。Unity 以音频媒体时间采样动作。暂停保持姿态，恢复接续；取消、切换系统和断线丢弃过期帧。若生成赶不上播放，会保持最后一个生成姿态并记录欠载，不会用预设动作填充。
 
-Windows 的 DiP 与 StreamTalk 共用 `E:\YachiyoMotion` 的同一启动/关闭入口、同一服务端口和串行 GPU 队列。StreamTalk 的新增 Python 包隔离在 `runtime-streamtalk`，原 DiP 运行时保留。服务启动时预热；无需再手动启动另一个进程。Mac 仍是一个应用。Ubuntu 切换入口保留，Ubuntu 的 StreamTalk 安装和实机验收尚未完成。
+笔记本 Windows 的 DiP 与 StreamTalk 共用 `E:\YachiyoMotion` 的同一启动/关闭入口、同一服务端口和串行 GPU 队列。StreamTalk 的新增 Python 包隔离在 `runtime-streamtalk`，原 DiP 运行时保留。服务启动时预热；无需再手动启动另一个进程。Mac 仍是一个应用。Ubuntu 切换入口保留，Ubuntu 的 StreamTalk 安装和实机验收尚未完成。
 
 首次准备：
 
 1. 运行 `python3 tools/fetch_streamtalk.py` 下载固定版本的源码、speaker-2 权重、WavLM 和 95 份 BEAT2 检索动作。
 2. 从 [SMPL-X 官网](https://smpl-x.is.tue.mpg.de/) 取得授权后，将 `SMPLX_NEUTRAL_2020.npz` 放入 `models/streamtalk/`。
 3. 将 `vendor/streamtalk`、`models/streamtalk`、更新的 `service/` 与 `windows/` 复制到笔记本既有 `E:\YachiyoMotion`。用原运行时执行 `runtime\python.exe windows\install_streamtalk.py`，再通过现有入口重启动作服务。
-4. Mac「角色」页选择 Windows，保持「StreamTalk 语音驱动动作」开启。模型资源与检索缓存不进入仓库或 Mac 安装包。
+4. Mac「角色」页选择「笔记本 Windows · NVIDIA」，保持「StreamTalk 语音驱动动作」开启。模型资源与检索缓存不进入仓库或 Mac 安装包。
 
 3070 Laptop 8 GB 的首轮实测：6 秒实际人声产生 180 帧，首段约 2.11 秒、后续窗口约 1.3–1.4 秒；StreamTalk 单独进程的 PyTorch 显存峰值约 1599 MiB。与 DiP 共用服务时实测峰值约 1972 MiB。这个数字不包括驱动、桌面和其他进程，也不是端到端聊天响应时间；实际性能取决于 GPU 负载和语音长度。
 
@@ -121,3 +121,23 @@ node tools/desktop/verify-streamtalk.mjs /absolute/path/spoken.wav
 性能更新：袖口沿用原始绑定和权重，仅计算 40 个衔接点，移除每帧六次整件衣服的网格烘焙，并复用袖摆顶点缓冲。M5 Mac 在相同 2940×1584 窗口的 20 秒采样中，布料更新平均由 3.21 ms 降至 2.09 ms；静止渲染前后均约 60 FPS。StreamTalk 仍生成 30 FPS 动作，Unity 在音频时钟报告之间按显示帧插值，预测最多 50 ms，暂停和打断立即停止。详细验证及复现方式见 [验证记录](docs/validation.md)。
 
 待机与衔接更新：加入缓慢换重心、固定脚底、错开节奏的呼吸与手腕／手指微动，以及不规则眨眼和眼睛先于头部的小幅注视变化；不加“歪头思考”。相邻动作从当前姿态和运动速度直接过渡，下一句生成期间保留上一段姿态，连续语音不再强制回到待机。没有后续动作时才缓慢放松回站姿。待机细节在本地运行，语音肢体动作仍由 StreamTalk 真实生成。32 秒原生采样约 60 FPS；真实 GPU 连续三句的播放、衔接、暂停与打断验证通过。
+
+
+## 台式机 Windows / AMD
+
+已在 RX 9070 XT 16 GB 台式机部署到 `D:\YachiyoMotion`，使用独立复制的 Python 3.12 / PyTorch 2.9.1 + ROCm 7.2.1 环境。DiP 和 StreamTalk 共用一个动作服务进程；原 GPT-SoVITS 环境与进程保持独立。E 盘空间不足，因此本次使用 D 盘；笔记本的 E 盘副本保留。
+
+- Windows 桌面「八千代动作 - 启动／关闭／状态」可手动管理；不设置开机自启。
+- Mac「角色 → 动作服务 → 台式机 Windows · AMD」，或 F6 面板按 3，选择会保存。首次 SSH 登录或会话失效时在本机终端输入 Windows 密码，密码不写入源码或设置。
+- 台式机通道为 `127.0.0.1:28787`，笔记本 Windows 为 `18787`，Ubuntu 为 `8787`；三个通道相互独立。
+- 重装 AMD 环境时先准备好已有可运行的 Windows ROCm Python，再执行 `windows/install_amd.ps1 -BasePython <python.exe路径>`。脚本仅复制环境并在副本安装动作依赖；模型和 `vendor` 需另外按授权准备，不能用 NVIDIA 安装脚本覆盖此环境。
+
+台式机实测 DiP 每段 2 秒动作约 0.09–0.11 秒；StreamTalk 预热后的首窗口约 0.31–0.32 秒。真实 AMD 推理 → Mac 音频 → Unity 连续两句的交接约 56 ms，采样无动作欠载、无中间待机，暂停／恢复／打断通过。这些是本次样例结果，首次推理更慢；LLM 或 TTS 尚未给出下一句时仍需等待，不能保证所有对话零延迟。
+
+复现台式机链路：
+
+```sh
+YACHIYO_VERIFY_BACKEND=desktop node director/tools/desktop/verify-streamtalk.mjs /absolute/path/spoken.wav
+```
+
+该回归只替换 TTS 返回音频，身体动作来自真实 GPU，不代表已验收当前在线 TTS 或多服务并发性能。详见 [验证记录](docs/validation.md)。

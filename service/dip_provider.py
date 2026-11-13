@@ -50,7 +50,7 @@ exactly consistent. The upstream viewer uses positions, so use them for swing.
     return np.where((length>1e-6)[...,None],result,rotations)
 
 
-def decode_features(features, *, prompt="", source="DiP · RTX 3070 实时生成", start=0, initial_angle=0., origin=None):
+def decode_features(features, *, prompt="", source="DiP · 实时生成", start=0, initial_angle=0., origin=None):
     """Decode the actual predicted 263D HumanML features, preserving accumulated root motion."""
     data=np.asarray(features,dtype=np.float64)
     if data.ndim!=2 or data.shape[1]!=263 or not np.isfinite(data).all(): raise ValueError("Invalid HumanML features")
@@ -97,7 +97,7 @@ def decode_features(features, *, prompt="", source="DiP · RTX 3070 实时生成
 
 class DiPProvider:
     name="dip"
-    model_name="DiP 10-step / DistilBERT / RTX 3070"
+    model_name="DiP 10-step / DistilBERT"
     cache_identity="dip-600343-v3-ric"
     supports_stream=True
     def __init__(self):
@@ -107,7 +107,8 @@ class DiPProvider:
         if self.model is not None and self.idle_prefix is not None:return
         self.state="loading"
         import torch
-        if not torch.cuda.is_available():raise RuntimeError("CUDA unavailable")
+        if not torch.cuda.is_available():raise RuntimeError("No supported CUDA/ROCm GPU available")
+        self.model_name="DiP 10-step / DistilBERT / "+torch.cuda.get_device_name()
         torch.set_num_threads(4)
         sys.path.insert(0,str(ROOT/"vendor/dip"))
         from utils.model_util import create_model_and_diffusion,load_saved_model
@@ -151,7 +152,7 @@ class DiPProvider:
             _,path=root_trajectory(np.concatenate((dropped,np.zeros((1,263)))),state['angle'],state['origin'])
             state['origin']=path[-1];state['angle']+=float(dropped[:,0].sum())
         start=sum(len(a) for a in state['features'][:-1])
-        clip=decode_features(np.concatenate(state["features"]),prompt=prompt,start=start,initial_angle=state['angle'],origin=state['origin'])
+        clip=decode_features(np.concatenate(state["features"]),prompt=prompt,source="DiP · "+torch.cuda.get_device_name()+" 实时生成",start=start,initial_angle=state['angle'],origin=state['origin'])
         clip["generationSeconds"]=round(time.perf_counter()-started,4)
         clip["sequence"]=state["sequence"]
         return clip

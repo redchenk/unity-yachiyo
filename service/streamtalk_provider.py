@@ -60,7 +60,7 @@ class StreamTalkProvider:
         from transformers import Wav2Vec2Processor, WavLMModel
         from smplx.lbs import blend_shapes, vertices2joints, batch_rigid_transform
         if not torch.cuda.is_available():
-            raise RuntimeError("StreamTalk requires a CUDA GPU")
+            raise RuntimeError("StreamTalk requires a supported CUDA/ROCm GPU")
         torch.set_num_threads(4)
         sys.path.insert(0, str(self.vendor / "Scripts"))
         from FM.Net import SimpleSpeechModel, DiffusionDITNetPartsFixedExpressions2PostNormInteraction2

@@ -11,7 +11,7 @@ test('speech PCM preserves signed levels and downmixes stereo',()=>{
   assert.deepEqual([0,2,4,6].map(i=>bytes.readInt16LE(i)),[-32768,0,16384,32767]);
 });
 
-test('generated frames cross the bridge in order with no one-frame tail; disposal cancels remote work',async()=>{
+for (const backend of ['windows','ubuntu','desktop']) test(`${backend}: ordered frames and cancellation stay on the selected host`,async()=>{
   const calls=[],sent=[];
   const fetchImpl=async(url,options)=>{
     calls.push([url,options]);
@@ -19,12 +19,17 @@ test('generated frames cross the bridge in order with no one-frame tail; disposa
     if(options.method==='DELETE')return response({cancelled:true});
     return response({status:'done',availableFrames:53,motion:{startFrame:0,generationSeconds:.5,frames:Array.from({length:53},(_,i)=>i)}});
   };
-  const job=await prepareSpeechMotion(buffer,{fetchImpl,backend:'windows'});
+  const job=await prepareSpeechMotion(buffer,{fetchImpl,backend});
   await job.start({motion:(audio,clip)=>{sent.push(clip);return true;}},{});
   assert.deepEqual(sent.flatMap(x=>x.frames),Array.from({length:53},(_,i)=>i));
   assert(sent.every(x=>x.frames.length>=2&&x.frames.length<=13));
   assert.deepEqual(sent.map(x=>x.startFrame),[0,12,24,36,48]);
-  job.stop();assert(calls.some(([url,o])=>o.method==='DELETE'&&url.includes('backend=windows')));
+  job.stop();assert(calls.every(([url])=>url.includes(`backend=${backend}`)));
+  assert(calls.some(([,o])=>o.method==='DELETE'));
+});
+
+test('unknown speech backend fails before submitting audio',async()=>{
+  await assert.rejects(prepareSpeechMotion(buffer,{backend:'foreign',fetchImpl:()=>assert.fail('Unexpected request')}),/未知动作服务/);
 });
 
 test('cancel during warmup rejects and deletes job without sending old frames',async()=>{

@@ -60,7 +60,7 @@ namespace Yachiyo {
    for(int i=0;i<4;i++)if(Input.GetKeyDown(KeyCode.F1+i)){StopMotion();avatar.Act(localIds[i],localNames[i]);status="正在"+localNames[i]+"。";}
    if(Input.GetKeyDown(KeyCode.F5))PlaySample();
    if(Input.GetKeyDown(KeyCode.F6)){settings=!settings;cameraSettings=false;serviceFocusRequested=settings;}
-   if(settings&&!textFieldFocused){if(Input.GetKeyDown(KeyCode.Alpha1))SelectBackend("windows");if(Input.GetKeyDown(KeyCode.Alpha2))SelectBackend("ubuntu");}
+   if(settings&&!textFieldFocused){if(Input.GetKeyDown(KeyCode.Alpha1))SelectBackend("windows");if(Input.GetKeyDown(KeyCode.Alpha2))SelectBackend("ubuntu");if(Input.GetKeyDown(KeyCode.Alpha3))SelectBackend("desktop");}
    if(Input.GetKeyDown(KeyCode.F7)&&clothing)clothing.SetSimulation(!clothing.simulationEnabled);
    if(Input.GetKeyDown(KeyCode.F8)){cameraSettings=!cameraSettings;settings=false;cameraFocusRequested=cameraSettings;}
    if(Input.GetKeyDown(KeyCode.F9))SetCameraPreset(0);

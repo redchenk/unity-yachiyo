@@ -7,6 +7,11 @@ The transformer, DistilBERT, diffusion process and trained weights are unchanged
 from pathlib import Path
 
 path = Path(__file__).resolve().parents[1] / "vendor/dip/model/mdm.py"
+# Explicit packages prevent unrelated top-level `utils.py` modules in an
+# existing scientific Python installation from shadowing DiP's namespace.
+for package in ("utils", "model", "diffusion", "data_loaders"):
+    marker=path.parents[1] / package / "__init__.py"
+    if not marker.exists():marker.write_text("# DiP inference package boundary.\n")
 text = path.read_text()
 if "self.rot2xyz = None" not in text:
     text = text.replace("import clip\n", "")

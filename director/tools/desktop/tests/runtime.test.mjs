@@ -19,6 +19,25 @@ const post = async (base, route, input) => {
   return payload;
 };
 
+test('motion gateway isolates desktop and laptop routes and rejects arbitrary backends', async () => {
+  const dataDir=fs.mkdtempSync(path.join(os.tmpdir(),'yachiyo-motion-routes-')), requests=[];
+  const runtime=await startDesktopServer({resourceRoot:root,dataDir,port:0,services:{ensure:async()=>{throw Error('not used');}},fetchImpl:async(url,options)=>{
+    requests.push({url,method:options.method});return new Response('{}',{headers:{'Content-Type':'application/json'}});
+  }});
+  try {
+    const id='a'.repeat(24);
+    for(const [backend,port] of [['desktop',28787],['windows',18787],['ubuntu',8787]]) {
+      await post(runtime.origin,`/api/speech-motion/jobs?backend=${backend}`,{sampleRate:16000,pcm16:'AAA='});
+      const deleted=await fetch(`${runtime.origin}/api/speech-motion/jobs/${id}?backend=${backend}`,{method:'DELETE',headers:{'Content-Type':'application/json'}});
+      assert.equal(deleted.status,200);
+      assert.equal(requests.at(-2).url,`http://127.0.0.1:${port}/speech/jobs`);
+      assert.equal(requests.at(-1).url,`http://127.0.0.1:${port}/speech/jobs/${id}`);
+    }
+    const invalid=await fetch(`${runtime.origin}/api/speech-motion/health?backend=http://foreign.example`);
+    assert.equal(invalid.status,400);assert.equal(requests.length,6);
+  } finally {await runtime.close();fs.rmSync(dataDir,{recursive:true,force:true});}
+});
+
 test('platform data paths are persistent and support explicit portable storage', () => {
   const home = path.resolve('/users/example');
   assert.equal(studioDataDirectory({ platform: 'darwin', env: {}, home }), path.join(home, 'Library', 'Application Support', 'YachiyoUnityDirector'));

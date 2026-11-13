@@ -88,3 +88,16 @@ Reproduce the native idle, transition and stance-drift diagnostic (writes JSON/P
 ```
 
 The real-inference queued-speech regression uses `node director/tools/desktop/verify-streamtalk.mjs /absolute/path/spoken.wav`. It requires the running GPU service and the built private Mac application.
+
+
+## 2026-11-13 — AMD desktop deployment and queued neural speech
+
+- RX 9070 XT (about 15.92 GiB VRAM), Ryzen 7 9800X3D, Windows 11 Pro: deployed DiP + StreamTalk to `D:\YachiyoMotion`. The existing Windows ROCm Python was copied into a separate runtime. Original GPT-SoVITS PID 14080, port 9880, Torch and transformers versions were preserved through motion stop/start. This verifies lifecycle isolation, not sustained simultaneous inference throughput.
+- All 106 model files (2,000,457,031 bytes) matched source hashes, including the separately licensed SMPL-X asset. Private weights, credentials, recordings, runtime and verification manifests are excluded from Git. No auto-start task/service was installed.
+- Manual stop closed motion port 8787; restart produced a new motion PID; repeated start retained that PID. Three desktop shortcuts invoke the same start/stop/status controls.
+- Real desktop DiP generated three consecutive 2-second clips (wave/walk/stand) in 0.1119 / 0.0879 / 0.0884 seconds. Finite poses, continuation, cancellation and old-stream rejection passed. Existing laptop Windows inference also passed.
+- Native installed Mac backend verification passed: laptop generation → switch cancels old motion → three desktop chunks → laptop reconnect → desktop reconnect/save. Ubuntu is retained as an option but its new-version physical-machine acceptance remains deferred by the user.
+- Speech now prefetches only the next queued neural job during current playback, reuses it at the handoff, and streams subsequent frames under the real media clock. No automatic `thinking` state or artificial inter-turn playback delay is sent for Unity. Cancellation, expiry, backend changes and late prefetch disposal are covered by focused tests.
+- Real desktop GPU → WKWebView voice → Unity test passed for three jobs: first-window inference 1.2666 / 0.3121 / 0.3229 seconds in the latest run. The next job was requested 6.877 seconds before the preceding audio ended; next audio started 56 ms after that end. The handoff reported `model`, zero sampled underruns and zero intermediate idle frames. Pause/resume/completion/cancel passed. This replaces only TTS with a prerecorded six-second voice WAV, not live LLM/TTS. It does not guarantee no waiting when future text or audio has not arrived.
+- Director checks: 60 passed, 1 external NSIS fixture skipped. Python service checks: 19 passed. Frontend/release builds and installed deep/strict signing passed. Updated frontend is packaged with the verified native build; no garment, shoulder/sleeve attachment or private scene rebuild occurred.
+- Local evidence: ignored `artifacts/desktop/` (including native-switch, lifecycle, model integrity, inference and build logs) and `artifacts/streamtalk-native-desktop/result.json`. Reproduce using `YACHIYO_VERIFY_BACKEND=desktop node director/tools/desktop/verify-streamtalk.mjs /absolute/path/spoken.wav`; it asserts submission before prior audio end, handoff under 400 ms, streamed motion and cancellation.

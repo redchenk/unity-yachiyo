@@ -1,6 +1,6 @@
 import { attachAudioMouthAnalyser } from './audioMouthAnalyser.js';
 import { affectRuntime, compilePerformanceTimeline, publishPerformance } from './performancePlan.mjs';
-import { prepareSpeechMotion } from './speechMotion.mjs';
+import { createSpeechMotionBuffer } from './speechMotionBuffer.mjs';
 import { readLipsyncSettings } from './lipsyncSettings.js';
 import { CLOSED_MOUTH } from '../../../shared/audio-lipsync.mjs';
 import { playableTtsBlob } from '../../../shared/tts-audio.mjs';
@@ -414,9 +414,18 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   let queueRunning = false;
   let queueSequence = 0;
   let lastPlaybackEndedAt = 0;
+  let motionPrefetchItem = null;
   const speechQueue = [];
   const audioMeters = new WeakMap();
   const audioBlobs = new WeakMap(), audioTiming = new WeakMap(), audioDecoded = new WeakMap(), audioMotions = new WeakMap();
+  const audioDecoding = new WeakMap();
+  const motionReport = detail => window.dispatchEvent(new CustomEvent('yachiyo:speech-motion', { detail }));
+  const motionBuffer = createSpeechMotionBuffer({
+    decode: preparePerformanceAudio,
+    backend: () => window.TSUKUYOMI_AVATAR_DRIVER?.backend,
+    enabled: () => window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity' && localStorage.getItem('yachiyo:speechMotion') !== 'off',
+    report: motionReport
+  });
   let lipsyncSettings = readLipsyncSettings();
   const refreshLipsync = () => { lipsyncSettings = readLipsyncSettings(); };
   window.addEventListener?.('tsukuyomi:lipsync-settings', refreshLipsync);
@@ -495,7 +504,8 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   }
 
   function releaseAudio(audio) {
-    audioMotions.get(audio)?.stop(); audioMotions.delete(audio); audioDecoded.delete(audio);
+    motionBuffer.release(audio); audioMotions.delete(audio); audioDecoded.delete(audio);
+    audioBlobs.delete(audio); audioTiming.delete(audio); audioDecoding.delete(audio);
     audioMeters.get(audio)?.dispose();
     audioMeters.delete(audio);
     audio?.pause?.();
@@ -544,6 +554,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   }
 
   function rejectQueued(error = makeStopError()) {
+    motionPrefetchItem = null;
     while (speechQueue.length) {
       const item = speechQueue.shift();
       rejectQueueItem(item, error);
@@ -598,10 +609,15 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     setState({ status: 'idle', error: '' });
   }
 
-  async function prepareAudioMeter(audio) {
+  function ensureAudioContext() {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return;
     audioContext ||= new AudioContextClass({ sampleRate: 16000, latencyHint: 'interactive' });
+    return audioContext;
+  }
+
+  async function prepareAudioMeter(audio) {
+    if (!ensureAudioContext()) return;
     let timer;
     try {
       await waitForCancellablePlaybackGate(Promise.race([
@@ -630,11 +646,19 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     return audio;
   }
 
-  async function preparePerformanceAudio(audio) {
+  function preparePerformanceAudio(audio) {
+    if (audioDecoded.has(audio)) return Promise.resolve(audioDecoded.get(audio));
+    if (!audioDecoding.has(audio)) audioDecoding.set(audio, decodePerformanceAudio(audio));
+    return audioDecoding.get(audio);
+  }
+
+  async function decodePerformanceAudio(audio) {
+    ensureAudioContext();
     const blob = audioBlobs.get(audio);
     if (!audioContext || !blob || blob.size > 20 * 1024 * 1024) return;
     try {
       const decoded = await audioContext.decodeAudioData(await blob.arrayBuffer());
+      if (!audioBlobs.has(audio)) return;
       audioDecoded.set(audio, decoded);
       const pcm = decoded.getChannelData(0), size = Math.max(1, Math.round(decoded.sampleRate * .02));
       let onset = 0;
@@ -644,6 +668,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         if (Math.sqrt(power / n) > .012) { onset = i / decoded.sampleRate; break; }
       }
       audioTiming.set(audio, { duration: decoded.duration, onset });
+      return decoded;
     } catch (_) { /* Metadata/onset fallback keeps playback available. */ }
   }
 
@@ -755,13 +780,27 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
     const preparedCount = speechQueue.filter((item) => item.audioPromise).length;
     const maxPrefetch = directLocalGptSovits ? 1 : MAX_TTS_PREFETCH;
     const budget = Math.max(0, maxPrefetch - preparedCount);
-    if (!budget) return;
     speechQueue
       .filter((item) => !item.audioPromise)
       .slice(0, budget)
       .forEach((item) => {
         prepareQueueItem(item, token).catch(() => {});
       });
+    // Only the next utterance occupies the second GPU job slot. TTS may look
+    // further ahead, but never submit the whole reply as a burst of GPU jobs.
+    if (!playbackActive || window.TSUKUYOMI_AVATAR_DRIVER?.mode !== 'unity') return;
+    const next = speechQueue.find(item => !item.cancelled && !isQueueItemExpired(item));
+    if (motionPrefetchItem === next) return;
+    if (motionPrefetchItem?.audio) motionBuffer.release(motionPrefetchItem.audio);
+    motionPrefetchItem = next || null;
+    if (!next) return;
+    prepareQueueItem(next, token).then(audio => {
+      if (!audio || motionPrefetchItem !== next || next.cancelled || token !== queueToken) return;
+      return motionBuffer.get(audio, {
+        prefetch: true, neuralMotion: next.options.neuralMotion,
+        cancelled: () => token !== queueToken || next.cancelled || isQueueItemExpired(next)
+      });
+    }).catch(() => {}); // Playback owns error reporting and the voice-only fallback.
   }
 
   async function playInternal(text, options = {}, token = queueToken, preparedAudioPromise = null, onPlaybackStart = null) {
@@ -812,19 +851,16 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       }
       await prepareAudioMeter(audio);
       if (window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity') await preparePerformanceAudio(audio);
-      let motionError='';
-      if (window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity' && audioDecoded.has(audio) && localStorage.getItem('yachiyo:speechMotion') !== 'off' && options.neuralMotion !== false) {
-        const report=detail=>window.dispatchEvent(new CustomEvent('yachiyo:speech-motion',{detail}));
-        report({status:'loading',model:'StreamTalk'});
-        try {
-          const motion=await prepareSpeechMotion(audioDecoded.get(audio), {
-            backend:window.TSUKUYOMI_AVATAR_DRIVER.backend, cancelled:()=>token!==queueToken, report
-          });
-          audioMotions.set(audio,motion);
-        } catch(error) {
-          if(error.name==='AbortError'){releaseAudio(audio);throw error;}
-          motionError=error.message; report({status:'error',error:motionError});
-        }
+      let motionError = '';
+      try {
+        const motion = await motionBuffer.get(audio, {
+          neuralMotion: options.neuralMotion,
+          cancelled: () => token !== queueToken || (options.expiresAt > 0 && Date.now() > options.expiresAt)
+        });
+        if (motion) audioMotions.set(audio, motion);
+      } catch (error) {
+        if (error.name === 'AbortError') { releaseAudio(audio); throw error; }
+        motionError = error.message; motionReport({ status: 'error', error: motionError });
       }
       if (token !== queueToken) { releaseAudio(audio); throw makeStopError(); }
       currentAudio = audio;
@@ -980,6 +1016,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         pruneExpiredQueue();
         if (!speechQueue.length) break;
         const item = speechQueue.shift();
+        if (motionPrefetchItem === item) motionPrefetchItem = null;
         if (item.cancelled) continue;
         try {
           const audioPromise = prepareQueueItem(item, token, { notifyLoading: true });
@@ -989,7 +1026,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
               Number(queuedItem.options?.interTurnPauseMs || 0) > 0
             )
           ).length;
-          const interTurnPauseMs = adaptLive2DInterTurnPauseMs(
+          const interTurnPauseMs = window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity' ? 0 : adaptLive2DInterTurnPauseMs(
             item.options.interTurnPauseMs,
             pendingLiveReplyCount
           );

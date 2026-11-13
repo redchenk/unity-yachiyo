@@ -6,9 +6,9 @@ Unity 桌面客户端 + Ubuntu RTX 3070 动作服务。**默认已接入 DiP 连
 
 ## 使用
 
-双击根目录 **启动八千代.command**。客户端会恢复上次选择的 Windows／Ubuntu 动作服务；笔记本离线时仍可使用本地预览。
+双击根目录 **启动八千代.command**。客户端会恢复上次选择的台式机 Windows／笔记本 Windows／Ubuntu 动作服务；笔记本离线时仍可使用本地预览。
 
-- **场景设置 F6 → Windows／Ubuntu**：选择笔记本当前启动的系统，即可切换动作来源，无需手动改地址。设置面板打开且未编辑文字时，也可按 **1 选 Windows、2 选 Ubuntu**。选择会保存，重启客户端后继续使用。
+- **场景设置 F6 → Windows／Ubuntu**：选择笔记本当前启动的系统，即可切换动作来源，无需手动改地址。设置面板打开且未编辑文字时，也可按 **1 选笔记本 Windows、2 选 Ubuntu、3 选台式机 Windows**。选择会保存，重启客户端后继续使用。
 - 首次连接或登录会话过期时，会打开本机终端完成 SSH 登录；Windows 密码不会写入客户端或脚本。Windows 仍由笔记本上的手动入口启动／关闭模型；若未启动，客户端会明确提示。Ubuntu 沿用已有 SSH 密钥和动作服务。
 - 切换会立即停止旧动作并清空缓冲，过期的会话、生成和连接检查结果不能覆盖新选择。笔记本未启动到所选系统时显示连接失败，不会自动改用另一边。这里切换的是服务连接；需要先在笔记本启动相应系统。
 
@@ -129,3 +129,12 @@ systemctl --user stop yachiyo-motion.service
 - 界面左下新增「表情」按钮：平静、开心、惊讶、难过、思考、说话 F11、眨眼 F10。
 - 对话/语音后续只需调用 `SetEmotion(...)`、`SetTalking(...)`、`SetViseme(...)`、`SetLookTarget(...)`；口型时间序列可直接写入 viseme。
 - `--verify-face <prefix>` 会输出 open / smile / blink / surprised / sad / thinking / talk / side / neck 等面部截图；日志中的 `FACE_CONTROLLER` 行会列出实际找到的网格数、形态数和管理数量。
+
+
+## 台式机 AMD 副本（2026-11-13）
+
+台式机部署根目录为 `D:\YachiyoMotion`。桌面「八千代动作 - 启动／关闭／状态」指向根目录脚本；DiP 与 StreamTalk 共享一个 Python 进程。无开机自启。当前 Windows ROCm 环境从已有工作环境复制到本目录，后续依赖安装只发生在副本内；原 GPT-SoVITS 不受启动／停止脚本管理。
+
+Mac 选择「台式机 Windows · AMD」后通过独立 SSH 通道 `127.0.0.1:28787` 连接。`tools/connect_desktop.sh` 支持 `YACHIYO_DESKTOP_HOST` 和 `YACHIYO_DESKTOP_PORT` 覆盖；高级自定义 HTTP 地址仅用于原生 DiP 客户端，导演语音动作代理固定到本机 28787。笔记本 Windows（18787）和 Ubuntu（8787）继续可选。Ubuntu 实机生成仍留待笔记本切换系统后验收。
+
+恢复安装需准备 `service/`、`windows/`、`vendor/dip`、`vendor/streamtalk` 及合法模型资源，运行 `windows/install_amd.ps1 -BasePython <可运行的Windows-ROCm-python.exe>`。该脚本拒绝覆盖没有 AMD 所有权记录的既有 runtime。`tools/prepare_dip.py` 会为 DiP 上游包补充明确包边界，避免被环境中无关的 `utils.py` 截获。
