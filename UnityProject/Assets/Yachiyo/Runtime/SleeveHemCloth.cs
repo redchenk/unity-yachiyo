@@ -23,6 +23,20 @@ namespace Yachiyo {
   Mesh fullMesh,upperMesh;
   readonly Mesh baked=new Mesh();
   readonly Vector3[] worldVertices;
+  readonly Vector3[] solvedPoints,seamCorrections,renderVertices,shellVertices;
+  readonly SeamPoint[] seamPoints;
+  // Only these forty vertices are needed by the two seams. Keep the original
+  // bind poses and weights instead of baking all 11,717 clothing vertices six
+  // times per frame. Cloth1 has no blend shapes; its authored skin is unchanged.
+  sealed class SeamPoint {
+   readonly Transform[] bones=new Transform[4];readonly Vector3[] local=new Vector3[4];readonly float[] weights=new float[4];
+   public SeamPoint(Vector3 vertex,BoneWeight weight,Transform[] rig,Matrix4x4[] bindposes){
+    int[] ids={weight.boneIndex0,weight.boneIndex1,weight.boneIndex2,weight.boneIndex3};
+    weights[0]=weight.weight0;weights[1]=weight.weight1;weights[2]=weight.weight2;weights[3]=weight.weight3;
+    for(int i=0;i<4;i++)if(weights[i]>0){bones[i]=rig[ids[i]];local[i]=bindposes[ids[i]].MultiplyPoint3x4(vertex);}
+   }
+   public Vector3 World(){var point=Vector3.zero;for(int i=0;i<4;i++)if(weights[i]>0)point+=bones[i].TransformPoint(local[i])*weights[i];return point;}
+  }
   readonly float side;
   readonly int createdFrame;
   public int VertexCount=>cloth.vertices.Length;
@@ -80,6 +94,9 @@ namespace Yachiyo {
    pinRenderIds=Enumerable.Range(0,sourceIds.Length).Where(i=>seamKeys.Contains(Key(bind[sourceIds[i]]))).ToArray();
    if(pinRenderIds.Length<4)throw new InvalidOperationException("Too few sleeve seam pins: "+pinRenderIds.Length);
    pinSourceIds=pinRenderIds.Select(i=>sourceIds[i]).ToArray();
+   if(original.blendShapeCount!=0)throw new InvalidOperationException("Sleeve seam sampling requires the original clothing mesh without blend shapes");
+   var originalWeights=original.boneWeights;var originalBones=source.bones;var originalBindposes=original.bindposes;
+   seamPoints=pinSourceIds.Select(i=>new SeamPoint(bind[i],originalWeights[i],originalBones,originalBindposes)).ToArray();
    source.BakeMesh(baked);var posed=baked.vertices.Select(source.transform.TransformPoint).ToArray();
    var reference=sourceIds.Select(i=>owner.ProjectSleeveSurface(posed[i],side)).ToArray();
 
@@ -196,6 +213,8 @@ namespace Yachiyo {
    shellMat.SetFloat("_ClothCollision",0);shellMat.SetFloat("_SleeveTwoSided",0);shellMat.SetFloat("_CullMode",0);shellRenderer.sharedMaterial=shellMat;
    shellMesh=new Mesh{name="Authored sleeve back surface"};shellMesh.vertices=physicalRest.Select(p=>shellGo.transform.InverseTransformPoint(p-owner.hips.forward*.06f)).ToArray();shellMesh.triangles=shellTriangles;shellMesh.uv=sourceIds.Select(i=>original.uv[i]).ToArray();shellMesh.uv2=sourceIds.Select(i=>original.uv[i]).ToArray();shellMesh.uv3=sourceIds.Select(i=>original.uv3[i]).ToArray();shellMesh.RecalculateNormals();shellMesh.RecalculateBounds();shellGo.AddComponent<MeshFilter>().sharedMesh=shellMesh;shellOffset=-owner.hips.forward*.06f;
    Debug.Log("HEM_PANEL "+sleeveSide+" vertices="+mesh.vertexCount+" native="+particles.Length+" triangles="+physicalTriangles.Length/3+" pins="+PinCount+" map error="+error);
+   solvedPoints=new Vector3[worldVertices.Length];seamCorrections=new Vector3[worldVertices.Length];renderVertices=new Vector3[worldVertices.Length];shellVertices=new Vector3[shellIds.Length];
+   mesh.MarkDynamic();shellMesh.MarkDynamic();
   }
   static CapsuleCollider[] FittedContacts(GarmentPhysics owner){
    var contacts=new List<CapsuleCollider>();
@@ -222,23 +241,25 @@ namespace Yachiyo {
    return Vector3.Lerp(p,owner.hips.TransformPoint(q),weight);
   }
   public void Prepare(GarmentPhysics owner){
-   source.BakeMesh(baked);var vertices=baked.vertices;
-   for(int i=0;i<pins.Length;i++)pins[i].position=owner.ProjectSleeveSurface(source.transform.TransformPoint(vertices[pinSourceIds[i]]),side);
+   for(int i=0;i<pins.Length;i++)pins[i].position=owner.ProjectSleeveSurface(seamPoints[i].World(),side);
   }
+  // Used only by the explicit cloth verification, against Unity's skinning.
+  public float VerifySeamSkinning(){source.BakeMesh(baked);var vertices=baked.vertices;float error=0;for(int i=0;i<seamPoints.Length;i++)error=Mathf.Max(error,Vector3.Distance(seamPoints[i].World(),source.transform.TransformPoint(vertices[pinSourceIds[i]])));return error;}
   public void Update(GarmentPhysics owner){
    Prepare(owner);if(Time.frameCount==createdFrame)return;
    cloth.externalAcceleration=owner.hips.forward*(.25f*owner.wind*Mathf.Sin(Time.time*1.5f));
    var particles=cloth.vertices;Finite=particles.All(v=>float.IsFinite(v.x)&&float.IsFinite(v.y)&&float.IsFinite(v.z));if(!Finite)return;
-   var points=particleForVertex.Select(i=>space.TransformPoint(particles[i])).ToArray();PhysicalSeamLag=0;SeamError=0;
-   var corrections=new Vector3[points.Length];
+   var points=solvedPoints;var corrections=seamCorrections;var toWorld=space.localToWorldMatrix;
+   for(int i=0;i<points.Length;i++)points[i]=toWorld.MultiplyPoint3x4(particles[particleForVertex[i]]);PhysicalSeamLag=0;SeamError=0;
    for(int i=0;i<points.Length;i++)if(renderPin[i]>=0){corrections[i]=pins[renderPin[i]].position-points[i];PhysicalSeamLag=Mathf.Max(PhysicalSeamLag,corrections[i].magnitude);}
    for(int i=0;i<worldVertices.Length;i++){var p=points[i]+corrections[nearestSeam[i]]*seamBlend[i];if(renderPin[i]<0)p=ProjectSkirt(owner,p,.55f);worldVertices[i]=p;}
    for(int i=0;i<worldVertices.Length;i++)if(renderPin[i]>=0){worldVertices[i]=pins[renderPin[i]].position;SeamError=Mathf.Max(SeamError,Vector3.Distance(worldVertices[i],pins[renderPin[i]].position));}
-   mesh.vertices=worldVertices.Select(renderer.transform.InverseTransformPoint).ToArray();mesh.RecalculateNormals();mesh.RecalculateBounds();
-   if(shellMesh){var sv=new Vector3[shellIds.Length];for(int i=0;i<sv.Length;i++)sv[i]=shellRenderer.transform.InverseTransformPoint(worldVertices[shellAnchor[i]]+shellOffset);shellMesh.vertices=sv;shellMesh.RecalculateNormals();shellMesh.RecalculateBounds();}
+   var toLocal=renderer.transform.worldToLocalMatrix;for(int i=0;i<renderVertices.Length;i++)renderVertices[i]=toLocal.MultiplyPoint3x4(worldVertices[i]);
+   mesh.vertices=renderVertices;mesh.RecalculateNormals();mesh.RecalculateBounds();
+   if(shellMesh){var shellLocal=shellRenderer.transform.worldToLocalMatrix;for(int i=0;i<shellVertices.Length;i++)shellVertices[i]=shellLocal.MultiplyPoint3x4(worldVertices[shellAnchor[i]]+shellOffset);shellMesh.vertices=shellVertices;shellMesh.RecalculateNormals();shellMesh.RecalculateBounds();}
   }
   public Vector3[] WorldVertices()=>worldVertices;
-  public Vector3[] PhysicsWorldVertices()=>particleForVertex.Select(i=>space.TransformPoint(cloth.vertices[i])).ToArray();
+  public Vector3[] PhysicsWorldVertices(){var vertices=cloth.vertices;return particleForVertex.Select(i=>space.TransformPoint(vertices[i])).ToArray();}
   public int[] PhysicsTriangles=>physicalTriangles;
   public void SetVisible(bool active){renderer.enabled=active;if(shellRenderer)shellRenderer.enabled=active;source.sharedMesh=active?upperMesh:fullMesh;}
  }

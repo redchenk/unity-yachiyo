@@ -37,6 +37,9 @@ try{
  speech=__avatarTools.createLive2DSpeechPlayer();let audio;
  const play=speech.enqueue('声と体の動きを確認します。',{sourceLang:'ja',performance:__avatarTools.affectRuntime.plan({intent:'explain',gestures:[{type:'explain'}]}),onStart:d=>{audio=d.audio;}});
  await wait(()=>audio,'speech never started');
+ // Let the audio device start and the one-shot diagnostic PNG finish before
+ // measuring display cadence. Real audio stalls must hold, not invent motion.
+ await wait(()=>audio.currentTime>=1.2,'audio clock never advanced');
  for(let i=0;i<5;i++){await delay(500);result.audioTimes.push(audio.currentTime);post({phase:'speaking'+i,audioTime:audio.currentTime});await delay(220);}
  audio.pause();await delay(400);post({phase:'paused0',audioTime:audio.currentTime});await delay(400);post({phase:'paused1',audioTime:audio.currentTime});await delay(220);
  await audio.play();await delay(700);post({phase:'resumed',audioTime:audio.currentTime});await delay(220);
@@ -69,8 +72,12 @@ try{
  assert.equal(speaking.length,5);
  for(const p of speaking){assert(p.neuralSpeechMotion&&p.bodyPlaying);assert(p.motionSource.includes('StreamTalk'));assert.equal(p.cuesFired,0);assert(Math.abs(p.neuralClock-p.mediaTime)<.3);assert.equal(p.neuralUnderruns,0);}
  const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
+ const first=speaking[0],last=speaking.at(-1);
+ assert(last.neuralInterpolatedFrames-first.neuralInterpolatedFrames>20,'No render-cadence interpolation between audio clock reports');
+ assert((last.neuralPoseAdvances-first.neuralPoseAdvances)/(last.neuralRenderFrames-first.neuralRenderFrames)>.85,'Generated body poses are holding display frames');
  assert(Math.max(...speaking.map(p=>distance(p.rightHand,speaking[0].rightHand)))>.015,'No generated hand movement');
  assert(Math.abs(phases.paused0.neuralClock-phases.paused1.neuralClock)<.04,'Motion advanced while paused');
+ assert(Math.abs(phases.paused0.renderedClock-phases.paused1.renderedClock)<.001,'Interpolated motion advanced while paused');
  assert(phases.resumed.neuralClock>phases.paused1.neuralClock+.3,'Motion did not resume with audio');
  for(const name of ['ended','cancelled']){assert.equal(phases[name].neuralSpeechMotion,false);assert.equal(phases[name].bodyPlaying,false);assert.equal(phases[name].audioActive,false);}
  console.log('PASS: real StreamTalk inference → WKWebView audio → Unity media-clock body, pause, resume and cancel');

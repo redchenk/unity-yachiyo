@@ -22,6 +22,7 @@ namespace Yachiyo {
   public int SpeechMotionFrames {get;private set;}
   public int SpeechMotionUnderruns {get;private set;}
   public float SpeechMotionClock=>NeuralSpeechMotion?speechClock:0;
+  public float SpeechRenderClock {get;private set;}
   float speechChunkStart;bool speechUnderrun;
   public float expression;
   YachiyoFaceController faceController;
@@ -87,7 +88,7 @@ namespace Yachiyo {
   }
   public void DiscardFuture()=>streamQueue.Clear();
   public void BeginSpeechMotion(){
-   Act("idle","正在准备语音动作");NeuralSpeechMotion=true;SpeechMotionFrames=0;SpeechMotionUnderruns=0;speechChunkStart=0;speechUnderrun=false;
+   Act("idle","正在准备语音动作");NeuralSpeechMotion=true;SpeechMotionFrames=0;SpeechMotionUnderruns=0;SpeechRenderClock=0;speechChunkStart=0;speechUnderrun=false;
   }
   public void AddSpeechMotion(MotionClip motion){
    if(!NeuralSpeechMotion)return;
@@ -110,10 +111,15 @@ namespace Yachiyo {
    bones[HumanBodyBones.Hips].localPosition=hipsRest;
    if(clip!=null) {
     if(NeuralSpeechMotion){
-     // Media time is authoritative: stalls hold and cancel releases the model.
-     clock=Mathf.Max(0,speechClock-speechChunkStart);
+     // Web audio reports at about 30 Hz. Interpolate the already generated
+     // poses at render cadence between reports instead of holding alternate
+     // display frames. Bound prediction to 50 ms; stale audio stops advancing.
+     float predicted=speechClock+(speechActive?Mathf.Clamp(Time.unscaledTime-speechAt,0,.05f):0);
+     if(speechActive)SpeechRenderClock=Mathf.Max(SpeechRenderClock,predicted);
+     float renderTime=Mathf.Min(SpeechRenderClock,Mathf.Max(0,(SpeechMotionFrames-1)/30f));
+     clock=Mathf.Max(0,renderTime-speechChunkStart);
      while(streamQueue.Count>0&&clock>=clip.frames.Length/clip.fps){
-      speechChunkStart+=clip.frames.Length/clip.fps;clip=streamQueue.Dequeue();clock=Mathf.Max(0,speechClock-speechChunkStart);
+      speechChunkStart+=clip.frames.Length/clip.fps;clip=streamQueue.Dequeue();clock=Mathf.Max(0,renderTime-speechChunkStart);
      }
      bool underrun=speechClock>SpeechMotionFrames/30f+.05f;
      if(underrun&&!speechUnderrun)SpeechMotionUnderruns++;speechUnderrun=underrun;

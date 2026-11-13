@@ -16,7 +16,7 @@ namespace Yachiyo {
    if(active&&!speechActive){speechClock=0;speechLevel=0;}
    speechActive=active;speechAt=Time.unscaledTime;
   }
-  public void SpeechFrame(float time,float level){speechClock=Mathf.Max(0,time);speechLevel=Mathf.Clamp01(level);speechAt=Time.unscaledTime;}
+  public void SpeechFrame(float time,float level){speechClock=Mathf.Max(0,time);speechLevel=Mathf.Clamp01(level);speechAt=Time.unscaledTime;if(!speechActive)SpeechRenderClock=speechClock;}
   public void Gesture(string type,float duration,float strength,string side){
    if(type=="head_tilt")return;
    if(type=="nod"||type=="shake_head"){

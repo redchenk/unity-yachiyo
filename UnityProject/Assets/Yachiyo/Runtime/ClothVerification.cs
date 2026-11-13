@@ -67,7 +67,7 @@ namespace Yachiyo {
    times.Sort();if(times.Count>0){report.meanFrameMs=times.Average();report.p95FrameMs=times[Mathf.Min(times.Count-1,Mathf.FloorToInt(times.Count*.95f))];report.meanTransferMs=solverTimes.Average();}
    File.WriteAllText(path+".json",JsonUtility.ToJson(report,true));Debug.Log("CLOTH_VERIFICATION_DONE "+path);
   }
-  [Serializable]class HemCase {public string name;public int frames;public bool finite=true;public float maxPhysicalSeamLag,maxVisibleSeamGap,meanFrameMs;}
+  [Serializable]class HemCase {public string name;public int frames;public bool finite=true;public float maxPhysicalSeamLag,maxVisibleSeamGap,maxSkinningError,meanFrameMs;}
   [Serializable]class HemReport {public bool toggleOff,toggleOn;public List<HemCase> cases=new List<HemCase>();}
   static IEnumerator CheckHems(StudioUI ui,AvatarMotion avatar,GarmentPhysics physics,string path){
    avatar.followPointer=false;physics.wind=.25f;yield return new WaitForSeconds(4);
@@ -80,7 +80,7 @@ namespace Yachiyo {
     float duration=name=="wave"?1.6f:name=="turn"?1.7f:name=="motion"?2.2f:name=="settled"?20:3;
     var state=new HemCase{name=name};float elapsed=0,totalFrame=0;
     while(elapsed<duration){yield return new WaitForEndOfFrame();elapsed+=Time.deltaTime;state.frames++;totalFrame+=Time.unscaledDeltaTime*1000;state.finite&=physics.Native.Finite;
-     foreach(var hem in physics.Native.hems){state.maxPhysicalSeamLag=Mathf.Max(state.maxPhysicalSeamLag,hem.PhysicalSeamLag);state.maxVisibleSeamGap=Mathf.Max(state.maxVisibleSeamGap,hem.SeamError);}
+     foreach(var hem in physics.Native.hems){state.maxPhysicalSeamLag=Mathf.Max(state.maxPhysicalSeamLag,hem.PhysicalSeamLag);state.maxVisibleSeamGap=Mathf.Max(state.maxVisibleSeamGap,hem.SeamError);if(state.frames%15==0)state.maxSkinningError=Mathf.Max(state.maxSkinningError,hem.VerifySeamSkinning());}
     }
     state.meanFrameMs=totalFrame/state.frames;report.cases.Add(state);CaptureSkirt(avatar,path+"-"+name);CaptureRig(avatar,path+"-"+name);
     // Camera exports block the main thread; let the existing stall/reset path
