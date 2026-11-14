@@ -11,8 +11,10 @@ const root=path.resolve(import.meta.dirname,'../..'),project=path.dirname(root);
 const wavFile=process.argv[2];
 if(!wavFile)throw Error('Usage: node tools/desktop/verify-streamtalk.mjs /absolute/path/spoken.wav');
 const backend=process.env.YACHIYO_VERIFY_BACKEND || 'windows';
+const inferenceGapMs=Number(process.env.YACHIYO_VERIFY_GAP_MS || 0);
+assert(Number.isFinite(inferenceGapMs)&&inferenceGapMs>=0&&inferenceGapMs<=900,'Invalid latency injection');
 assert(['windows','ubuntu','desktop'].includes(backend),'Unknown verification backend');
-const bytes=fs.readFileSync(wavFile),output=path.join(project,backend==='windows'?'artifacts/streamtalk-native':`artifacts/streamtalk-native-${backend}`);fs.mkdirSync(output,{recursive:true});
+const bytes=fs.readFileSync(wavFile),output=path.join(project,(backend==='windows'?'artifacts/streamtalk-native':`artifacts/streamtalk-native-${backend}`)+(inferenceGapMs?'-latency':''));fs.mkdirSync(output,{recursive:true});
 const temp=fs.mkdtempSync(path.join(os.tmpdir(),'yachiyo-streamtalk-'));
 const script=path.join(output,'browser-test.js'),nativeReport=path.join(output,'native');
 const built=await build({configFile:false,logLevel:'error',build:{write:false,lib:{entry:path.join(root,'tools/desktop/avatar-browser-entry.mjs'),formats:['iife'],name:'AvatarFixture'}}});
@@ -21,7 +23,7 @@ fs.writeFileSync(script,bundle+`\n(async()=>{
 const post=data=>window.webkit.messageHandlers.yachiyoVerification.postMessage(JSON.parse(JSON.stringify(data)));
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const wait=async(fn,label)=>{for(let i=0;i<2000;i++){if(fn())return;await delay(50);}throw Error(label);};
-const result={passed:false,motionStatuses:[],jobs:[],audioTimes:[]};let speech;
+const result={passed:false,motionStatuses:[],jobs:[],audioTimes:[]};let speech,firstAudio;
 try{
  await wait(()=>window.TSUKUYOMI_AVATAR_DRIVER?.ready,'avatar not ready');
  document.querySelector('.studio-settings-header button')?.click();
@@ -33,12 +35,18 @@ try{
   if(String(url)==='/api/tts')return new Response(bytes,{headers:{'Content-Type':'audio/wav'}});
   const requestedAt=performance.now();
   const r=await original(url,options);
+  if(${inferenceGapMs} && firstAudio && !result.delayedPoll && String(url).includes('/jobs/'+result.jobs[0]?.id+'?after=')){
+   const bufferedUntil=Number(new URL(String(url),location.href).searchParams.get('after'))/30;
+   result.delayedPoll={milliseconds:${inferenceGapMs},audioTime:firstAudio.currentTime,bufferedUntil};
+   await wait(()=>firstAudio.currentTime>=bufferedUntil+${inferenceGapMs}/1000,'Audio never reached the injected gap');
+   result.delayedPoll.returnedAudioTime=firstAudio.currentTime;
+  }
   if(String(url).includes('/api/speech-motion/jobs')&&options?.method==='POST')result.jobs.push({...await r.clone().json(),requestedAt});
   return r;
  };
  window.addEventListener('yachiyo:speech-motion',e=>result.motionStatuses.push(e.detail));
  speech=__avatarTools.createLive2DSpeechPlayer();let audio;
- const play=speech.enqueue('声と体の動きを確認します。',{sourceLang:'ja',performance:__avatarTools.affectRuntime.plan({intent:'explain',gestures:[{type:'explain'}]}),onStart:d=>{audio=d.audio;}});
+ const play=speech.enqueue('声と体の動きを確認します。',{sourceLang:'ja',performance:__avatarTools.affectRuntime.plan({intent:'explain',gestures:[{type:'explain'}]}),onStart:d=>{audio=d.audio;firstAudio=audio;}});
  await wait(()=>audio,'speech never started');
  // Let the audio device start and the one-shot diagnostic PNG finish before
  // measuring display cadence. Real audio stalls must hold, not invent motion.
@@ -75,7 +83,7 @@ try{
  assert(result.passed,result.error);
  const speaking=Object.entries(phases).filter(([name])=>name.startsWith('speaking')).map(([,v])=>v);
  assert.equal(speaking.length,5);
- for(const p of speaking){assert(p.neuralSpeechMotion&&p.bodyPlaying);assert(p.motionSource.includes('StreamTalk'));assert.equal(p.cuesFired,0);assert(Math.abs(p.neuralClock-p.mediaTime)<.3);assert.equal(p.neuralUnderruns,0);}
+ for(const p of speaking){assert(p.neuralSpeechMotion&&p.bodyPlaying);assert(p.motionSource.includes('StreamTalk'));assert.equal(p.cuesFired,0);assert(Math.abs(p.neuralClock-p.mediaTime)<.3);assert(p.neuralUnderruns<=(inferenceGapMs?1:0));}
  const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
  const first=speaking[0],last=speaking.at(-1);
  assert(last.neuralInterpolatedFrames-first.neuralInterpolatedFrames>20,'No render-cadence interpolation between audio clock reports');
@@ -91,6 +99,7 @@ try{
  assert.equal(phases.joining.neuralUnderruns,0,'Motion underrun at utterance handoff');
  assert.equal(phases.cancelled.idleDuringContinuationFrames,0,'Queued generated speech passed through idle');
  for(const name of ['ended','cancelled']){assert.equal(phases[name].neuralSpeechMotion,false);assert.equal(phases[name].bodyPlaying,false);assert.equal(phases[name].audioActive,false);}
+ if(inferenceGapMs){assert(result.delayedPoll,'Latency injection did not run during playback');assert(phases.cancelled.predictedMotionFrames>15,'Missing inference interval was not predicted');assert.equal(phases.cancelled.neuralRecoveryFrames,0,'Short inference gap incorrectly returned to idle');assert(phases.cancelled.maxPredictionGap>.2&&phases.cancelled.maxPredictionGap<1.1,'Unexpected prediction interval');assert(phases.cancelled.maxNeuralJointStep<8,'Trajectory correction snapped');}
  console.log('PASS: real StreamTalk inference → WKWebView audio → Unity media-clock body, queued prefetch, continuous handoff, pause, resume and cancel');
  console.log(path.join(output,'result.json'));
 }finally{if(!exited)child.kill('SIGTERM');}

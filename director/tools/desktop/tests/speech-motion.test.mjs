@@ -45,3 +45,26 @@ test('cancel during warmup rejects and deletes job without sending old frames',a
 test('model failure is surfaced and no replacement motion is fabricated',async()=>{
   await assert.rejects(prepareSpeechMotion(buffer,{fetchImpl:async(url,o)=>o.method==='POST'?response({id:'abc'}):response({status:'failed',error:'CUDA out of memory'})}),/CUDA out of memory/);
 });
+
+test('slow inference builds a reserve before speech playback; fast inference starts from one window',async()=>{
+  for(const [seconds,expectedPolls] of [[.3,1],[1.7,2]]){
+    let polls=0;const statuses=[];
+    const job=await prepareSpeechMotion({...buffer,duration:6},{report:s=>statuses.push(s),fetchImpl:async(url,o)=>{
+      if(o.method==='POST')return response({id:'reserve'});
+      if(o.method==='DELETE')return response({});
+      const start=polls++*52;return response({status:'running',availableFrames:start+52,motion:{startFrame:start,generationSeconds:seconds,frames:Array.from({length:52},(_,i)=>start+i)}});
+    }});
+    assert.equal(polls,expectedPolls);assert(statuses.at(-1).bufferedSeconds>=statuses.at(-1).reserveSeconds);job.stop();
+  }
+});
+
+test('a short completed utterance bypasses the reserve and an empty completion fails',async()=>{
+  for(const frames of [2,0]){
+    const result=prepareSpeechMotion(buffer,{fetchImpl:async(url,o)=>{
+      if(o.method==='POST')return response({id:'short'});
+      if(o.method==='DELETE')return response({});
+      return response({status:'done',availableFrames:frames,...(frames?{motion:{startFrame:0,generationSeconds:2,frames:[0,1]}}:{})});
+    }});
+    if(frames)(await result).stop();else await assert.rejects(result,/未返回动作帧/);
+  }
+});

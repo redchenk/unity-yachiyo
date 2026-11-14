@@ -10,16 +10,18 @@ namespace Yachiyo {
   Vector3 renderedHips,rootVelocity,exitRootVelocity,positionOffset,positionVelocityOffset;
   Vector3 motionOrigin,idleOrigin,restRoot;
   float blendDuration=.5f;
-  bool transitionPending,streamRecovering;
+  bool transitionPending,streamRecovering,streamUnderrun;
   public int MotionRevision {get;private set;}
   public bool SettlingToIdle=>(clip==null||streamRecovering)&&localAction=="idle"&&TransitionProgress<1;
-  public string PoseMode=>SettlingToIdle?"settling":clip!=null&&!streamRecovering?"model":localAction!="idle"?"action":"idle";
+  public string PoseMode=>streamPredicting?"predicting":SettlingToIdle?"settling":clip!=null&&!streamRecovering?"model":localAction!="idle"?"action":"idle";
   public float TransitionProgress=>transitionPending?0:Mathf.Clamp01(blendClock/blendDuration);
   public Vector3 CameraAnchor=>clip!=null&&!streamRecovering?bones[HumanBodyBones.Hips].position:transform.TransformPoint(restRoot+idleOrigin);
   static float Smooth5(float t){t=Mathf.Clamp01(t);return t*t*t*(t*(t*6-15)+10);}
   static Vector3 RotationVector(Quaternion q){
-   q.ToAngleAxis(out float angle,out var axis);if(angle>180)angle-=360;
-   return float.IsFinite(axis.x)&&float.IsFinite(axis.y)&&float.IsFinite(axis.z)&&Mathf.Abs(angle)>.00001f?axis*angle:Vector3.zero;
+   var axis=new Vector3(q.x,q.y,q.z);if(q.w<0)axis=-axis;
+   float length=axis.magnitude;if(!float.IsFinite(length))return Vector3.zero;
+   // atan2 retains precision for sub-degree display-frame rotations.
+   return length<.000001f?axis*(2*Mathf.Rad2Deg):axis*(2*Mathf.Atan2(length,Mathf.Abs(q.w))*Mathf.Rad2Deg/length);
   }
   static Quaternion Travel(Quaternion pose,Vector3 velocity,float seconds){float speed=velocity.magnitude;return speed<.00001f?pose:Quaternion.AngleAxis(speed*seconds,velocity/speed)*pose;}
   void CaptureTransition(float duration=.5f){
@@ -69,7 +71,7 @@ namespace Yachiyo {
    if((clip!=null&&!streamRecovering)||localAction!="idle"){
     if(clip!=null)KeepRootOrigin();CaptureTransition(.8f);
    }
-   clip=null;NeuralSpeechMotion=false;Streaming=false;streamRecovering=false;streamQueue.Clear();
+   clip=null;NeuralSpeechMotion=false;Streaming=false;streamRecovering=false;streamPredicting=false;previousModelFrame=null;streamQueue.Clear();
    localAction="idle";actionTime=0;CurrentAction="待机";MotionSource="本地动作";
   }
   bool BoundaryNeedsTransition(){
@@ -81,43 +83,37 @@ namespace Yachiyo {
   }
   void AdvanceMotionClock(float dt){
    if(clip==null){if(localAction!="idle"&&actionTime>=ActionDuration(localAction))ReleaseMotion();return;}
-   bool starved=false;
    if(NeuralSpeechMotion){
-    float predicted=speechClock+(speechActive?Mathf.Clamp(Time.unscaledTime-speechAt,0,.05f):0);
-    if(speechActive)SpeechRenderClock=Mathf.Max(SpeechRenderClock,predicted);
-    float renderTime=Mathf.Min(SpeechRenderClock,Mathf.Max(0,(SpeechMotionFrames-1)/30f));
-    clock=Mathf.Max(0,renderTime-speechChunkStart);
-    while(streamQueue.Count>0&&clock>=clip.frames.Length/clip.fps){
-     if(BoundaryNeedsTransition())CaptureTransition(.3f);
-     speechChunkStart+=clip.frames.Length/clip.fps;clip=streamQueue.Dequeue();clock=Mathf.Max(0,renderTime-speechChunkStart);
+    // Keep a continuous render clock between media reports. Correct small
+    // clock errors through playback speed instead of holding then jumping.
+    if(speechActive)speechReportAge+=dt;
+    float desired=speechClock+Mathf.Clamp(speechReportAge,0,.25f);
+    if(speechActive){
+     float error=desired-SpeechRenderClock;
+     if(error>.25f){CaptureTransition(.3f);SpeechRenderClock=desired;}
+     else SpeechRenderClock=Mathf.Max(SpeechRenderClock,Mathf.Min(desired+.035f,SpeechRenderClock+dt*(1+Mathf.Clamp((error-dt)*5,-.12f,.12f))));
     }
-    starved=speechActive&&SpeechRenderClock>SpeechMotionFrames/30f+.05f;
-    if(starved&&!speechUnderrun)SpeechMotionUnderruns++;speechUnderrun=starved;
-   }else{
-    clock+=dt;
-    if(Streaming){
-     while(streamQueue.Count>0&&clock>=clip.frames.Length/clip.fps){
-      if(BoundaryNeedsTransition())CaptureTransition(.3f);
-      clock-=clip.frames.Length/clip.fps;clip=streamQueue.Dequeue();CurrentAction=clip.prompt;MotionSource=clip.source;
-     }
-     starved=streamQueue.Count==0&&clock>=clip.frames.Length/clip.fps;
-     if(starved){if(!streamRecovering)StreamUnderruns++;clock=clip.frames.Length/clip.fps;}
-    }else if(clock>=clip.Duration){ReleaseMotion();return;}
-   }
-   if(starved&&!streamRecovering){KeepRootOrigin();CaptureTransition(.8f);localAction="idle";streamRecovering=true;}
-   else if(!starved&&streamRecovering){CaptureTransition(.4f);streamRecovering=false;}
-  }
-  void ApplyModelPose(float time){
-   float pos=Mathf.Clamp(time*clip.fps,0,clip.frames.Length-1);int a=(int)pos,b=Mathf.Min(a+1,clip.frames.Length-1);float mix=pos-a;
-   var first=clip.frames[a];var second=clip.frames[b];
-   // Continuous packets interpolate normally. A discontinuity is bridged on
-   // dequeue, never spread over a single frame at the end of the old packet.
-   if(Streaming&&streamQueue.Count>0&&time>=clip.Duration&&!BoundaryNeedsTransition()){
-    first=clip.frames[clip.frames.Length-1];second=streamQueue.Peek().frames[0];mix=Mathf.Clamp01((time-clip.Duration)*clip.fps);
-   }
-   for(int j=0;j<mapping.Length;j++)if(bones.TryGetValue(mapping[j],out var bone))bone.rotation=transform.rotation*Quaternion.Slerp(first.rotations[j],second.rotations[j],mix)*restGlobal[mapping[j]];
-   var root=Vector3.Lerp(first.root,second.root,mix);root.x-=startRoot.x;root.z-=startRoot.z;root*=hipHeight/clip.referenceHipHeight;
-   bones[HumanBodyBones.Hips].position=transform.TransformPoint(root+motionOrigin);
+    clock=Mathf.Max(0,SpeechRenderClock-speechChunkStart);
+   }else clock+=dt;
+   if(Streaming){
+    // A long outage has already settled. Restart the incoming non-audio clip
+    // at its beginning; short gaps consume the predicted part of its timeline.
+    if(streamRecovering&&!NeuralSpeechMotion&&streamQueue.Count>0)clock=clip.frames.Length/clip.fps;
+    while(streamQueue.Count>0&&clock+.00001f>=clip.frames.Length/clip.fps){
+     bool discontinuous=BoundaryNeedsTransition();if(discontinuous)CaptureTransition(.3f);
+     previousModelFrame=discontinuous?null:clip.frames[clip.frames.Length-1];
+     float duration=clip.frames.Length/clip.fps;clock=Mathf.Max(0,clock-duration);if(NeuralSpeechMotion)speechChunkStart+=duration;
+     clip=streamQueue.Dequeue();CurrentAction=clip.prompt;MotionSource=clip.source;
+    }
+   }else if(clock>=clip.Duration){ReleaseMotion();return;}
+   float gap=Streaming&&(streamQueue.Count==0||BoundaryNeedsTransition())?Mathf.Max(0,clock-clip.Duration):0;
+   bool starved=gap>1/clip.fps+.05f;
+   if(NeuralSpeechMotion){if(starved&&!speechUnderrun)SpeechMotionUnderruns++;speechUnderrun=starved;}
+   else {if(starved&&!streamUnderrun)StreamUnderruns++;streamUnderrun=starved;}
+   bool predicting=gap>0&&gap<=PredictionHorizon;
+   if(gap>PredictionHorizon&&!streamRecovering){KeepRootOrigin();CaptureTransition(.8f);localAction="idle";streamRecovering=true;}
+   else if(gap<=0&&(streamRecovering||streamPredicting)){CaptureTransition(streamRecovering?.4f:.25f);streamRecovering=false;}
+   streamPredicting=predicting&&!streamRecovering;
   }
  }
 }

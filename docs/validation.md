@@ -116,3 +116,23 @@ The real-inference queued-speech regression uses `node director/tools/desktop/ve
 "$HOME/Applications/Yachiyo Motion Studio.app/Contents/MacOS/Yachiyo Motion Studio" \
   --no-auto-connect --verify-motion-continuity /absolute/output/prefix
 ```
+
+
+## 2026-11-14 — Trajectory interpolation and inference-latency compensation
+
+- Replaced per-sample linear/root and spherical-linear/rotation interpolation with cubic position curves and spherical Bézier rotation curves. Adjacent packets retain the preceding sample so velocities continue across the packet seam. Monotone tangents limit overshoot, and a stable quaternion logarithm preserves precision for small display-frame rotations.
+- Short sample shortages now extend the existing generated trajectory using recent velocity and bounded acceleration, with a quintic decay to rest. Prediction is limited to 1.1 seconds and bounded angular/root displacement; it does not invent new semantic actions. Incoming samples reconcile from the displayed predicted pose and velocity. Longer outages settle, and late packets restart correctly at the floating-point timestamp boundary. Explicit completion/cancellation retains immediate 800 ms settling; a known queued successor may use the bounded continuation instead.
+- Speech render time advances continuously and corrects report jitter through small speed adjustments. Sparse media reports no longer alternate a 50 ms advance with a held pose. Pause freezes both prediction and blending. DiP starts refilling at an adaptive 2.4–5 second threshold instead of 650 ms, while preserving prompt replacement and the server's four-state continuation history. New sessions explicitly re-anchor their first clip. StreamTalk prepares a startup reserve based on measured first-window generation cost; short completed audio does not wait for a minimum-length buffer.
+- Native deterministic regression passed all previous end/handoff checks plus four shortages (100/300/650/850 ms): 114 predicted display frames, zero frozen predicted frames and zero premature settling/idle frames. Maximum late-packet correction was 1.62 degrees/frame at 60 Hz. The quadratic-trajectory fixture's maximum adjacent-frame angular-velocity change was 0.672 degrees/second across both samples and packet boundaries. Simulated 117 ms media-report intervals retained a 16.67 ms render-clock advance every frame. Long-outage recovery, explicit end and pause still passed.
+- Real RX 9070 XT StreamTalk → installed Mac audio → Unity passed with an injected 650 ms data shortage after the audio consumed its available window. Actual maximum missing trajectory time reached 800 ms; prediction handled it with zero neural recovery-to-idle frames and zero idle frames between queued utterances. Maximum measured right-upper-arm change was 3.01 degrees per display frame (sampling frames under 35 ms). The queued speech handoff was 54 ms. Pause/resume/end/cancel passed. The test uses the existing prerecorded human voice in place of TTS, with genuine GPU inference for all body samples.
+- Real DiP wave → walk → stand, prompt replacement and stop passed: 13 generated chunks, zero underruns and no late restart after cancellation. At 2940×1584 on the M5 Mac, the overlapping 20-second mixed-action capture averaged 59.60 FPS, frame-time p95 17.54 ms / p99 18.27 ms; cloth remained finite. This verifies the sampled workload, not every possible pose or sustained multi-service contention.
+- Frontend checks: 62 passed, one external NSIS fixture skipped. Frontend/native release builds and installed signature checks passed. No private model, garment mesh, shoulder attachment, or user's UI layout was replaced. Evidence lives in ignored `artifacts/trajectory-smoothing/` and `artifacts/streamtalk-native-desktop-latency/`.
+
+Reproduce the real inference shortage (waits for the actual audio clock, so device startup cannot hide the shortage):
+
+```sh
+YACHIYO_VERIFY_BACKEND=desktop YACHIYO_VERIFY_GAP_MS=650 \
+  node director/tools/desktop/verify-streamtalk.mjs /absolute/path/spoken.wav
+```
+
+Use `--verify-motion-continuity` for deterministic curve/clock/packet regressions. `--verify-stream` can be combined with `--profile-render` and `--profile-action streamed` for the real DiP and frame-cadence capture.

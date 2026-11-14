@@ -8,9 +8,11 @@ namespace Yachiyo {
   public DirectorBridge bridge;
   string path;float next;Report report=new Report();
   bool capturedSpeech;
+  Quaternion priorNeuralArm;bool hadNeuralArm;
   [Serializable]class Report {
    public bool connected,localActionSeen,happySeen,audioActive,bodyPlaying,localActionActive,generatedMotionSeen;
    public bool neuralSpeechMotion;public int neuralFrames,neuralUnderruns;public float neuralClock;
+   public int predictedMotionFrames,neuralRecoveryFrames;public float maxPredictionGap,maxNeuralJointStep;
    public bool awaitingContinuation;public string poseMode;public int idleDuringContinuationFrames;
    public int performances,mouthFrames,neuralRenderFrames,neuralPoseAdvances,neuralInterpolatedFrames;public float renderedClock,mouthOpen,closedVisemeMax,maxJawWithViseme,currentVisemeMax;
    public float[] maxVisemes=new float[5];public string lastReceipt,motionSource;
@@ -26,6 +28,13 @@ namespace Yachiyo {
    report.neuralSpeechMotion=bridge.avatar.NeuralSpeechMotion;report.neuralFrames=bridge.avatar.SpeechMotionFrames;report.neuralUnderruns=bridge.avatar.SpeechMotionUnderruns;report.neuralClock=bridge.avatar.SpeechMotionClock;
    report.awaitingContinuation=bridge.AwaitingContinuation;report.poseMode=bridge.avatar.PoseMode;if(report.awaitingContinuation&&report.poseMode=="idle")report.idleDuringContinuationFrames++;
    if(report.neuralSpeechMotion&&report.neuralFrames>0){float clock=bridge.avatar.SpeechRenderClock;if(clock>report.renderedClock+.0001f){report.neuralPoseAdvances++;if(clock>report.neuralClock+.001f)report.neuralInterpolatedFrames++;}report.neuralRenderFrames++;report.renderedClock=clock;}
+   if(report.neuralSpeechMotion&&report.neuralFrames>0){
+    if(bridge.avatar.PredictingMotion){report.predictedMotionFrames++;report.maxPredictionGap=Mathf.Max(report.maxPredictionGap,bridge.avatar.PredictionGap);}
+    if(report.poseMode=="settling"||report.poseMode=="idle")report.neuralRecoveryFrames++;
+    var arm=bridge.avatar.animator.GetBoneTransform(HumanBodyBones.RightUpperArm).rotation;
+    if(hadNeuralArm&&Time.deltaTime<.035f)report.maxNeuralJointStep=Mathf.Max(report.maxNeuralJointStep,Quaternion.Angle(priorNeuralArm,arm));
+    priorNeuralArm=arm;hadNeuralArm=true;
+   }else hadNeuralArm=false;
    report.mouthOpen=face.AudioMouthOpen;report.lastReceipt=bridge.LastReceipt;
    report.performanceIntent=bridge.PerformanceIntent;report.faceEmotion=face.Emotion.ToString();report.performanceGaze=bridge.PerformanceGaze;report.cuesFired=bridge.PerformanceCuesFired;report.performanceClock=bridge.PerformanceClock;report.gestureAmount=bridge.PerformanceGestureAmount;report.lastCue=bridge.LastCue;report.lastCueClock=bridge.LastCueClock;
    report.speechPlaybackWeight=bridge.avatar.SpeechPlaybackWeight;report.maxSpeechPlaybackWeight=Mathf.Max(report.maxSpeechPlaybackWeight,report.speechPlaybackWeight);report.gesture=bridge.avatar.ConversationGesture;

@@ -82,13 +82,14 @@ namespace Yachiyo {
    // stance so repeated idle/action cycles cannot accumulate that small offset.
    var origin=clip!=null&&!streamRecovering?transform.InverseTransformPoint(bones[HumanBodyBones.Hips].position):restRoot+idleOrigin;
    motionOrigin=new Vector3(origin.x,0,origin.z);
-   streamRecovering=false;MotionRevision++;clip=motion;clock=0;CurrentAction=label;MotionSource=motion.source;
+   streamRecovering=false;streamPredicting=false;streamUnderrun=false;previousModelFrame=null;MotionRevision++;clip=motion;clock=0;CurrentAction=label;MotionSource=motion.source;
    mapping=new HumanBodyBones[motion.bones.Length];for(int i=0;i<mapping.Length;i++) mapping[i]=Enum.TryParse(motion.bones[i],out HumanBodyBones b)?b:HumanBodyBones.LastBone;
    startRoot=motion.frames[0].root;
   }
+  public void StartStream(MotionClip motion,string label){Play(motion,label);Streaming=true;StreamChunks=1;StreamUnderruns=0;}
   public void Enqueue(MotionClip motion,string label){
    motion.Validate();
-   if(!Streaming){Play(motion,label);Streaming=true;StreamChunks=1;StreamUnderruns=0;}
+   if(!Streaming)StartStream(motion,label);
    else {if(motion.bones.Length!=clip.bones.Length)throw new ArgumentException("Stream skeleton changed");for(int i=0;i<motion.bones.Length;i++)if(motion.bones[i]!=clip.bones[i])throw new ArgumentException("Stream bone order changed");streamQueue.Enqueue(motion);StreamChunks++;}
   }
   public void DiscardFuture()=>streamQueue.Clear();
@@ -108,10 +109,11 @@ namespace Yachiyo {
    }
    SpeechMotionFrames+=motion.frames.Length;
   }
-  public void EndSpeechMotion(){if(NeuralSpeechMotion)ReleaseMotion();}
-  public void Act(string action,string label) {Initialize();if(action=="idle"){ReleaseMotion();return;}if(clip!=null&&!streamRecovering)KeepRootOrigin();CaptureTransition();streamRecovering=false;NeuralSpeechMotion=false;Streaming=false;streamQueue.Clear();clip=null;localAction=action;actionTime=0;CurrentAction=label;MotionSource="本地动作";}
+  public void AwaitNextMotion(){if(clip!=null)Streaming=true;}
+  public void EndSpeechMotion(bool continuation=false){if(!NeuralSpeechMotion)return;if(continuation&&clip!=null){NeuralSpeechMotion=false;Streaming=true;}else ReleaseMotion();}
+  public void Act(string action,string label) {Initialize();if(action=="idle"){ReleaseMotion();return;}if(clip!=null&&!streamRecovering)KeepRootOrigin();CaptureTransition();streamRecovering=false;streamPredicting=false;previousModelFrame=null;NeuralSpeechMotion=false;Streaming=false;streamQueue.Clear();clip=null;localAction=action;actionTime=0;CurrentAction=label;MotionSource="本地动作";}
   public void Tick(float dt) {
-   Initialize();actionTime+=dt;if(!transitionPending&&(!NeuralSpeechMotion||speechActive||clip==null))blendClock+=dt;AdvanceLife(dt);
+   Initialize();if(NeuralSpeechMotion&&!speechActive&&clip!=null){RememberPose(dt);return;}actionTime+=dt;if(!transitionPending&&(!NeuralSpeechMotion||speechActive||clip==null))blendClock+=dt;AdvanceLife(dt);
    // Capture exits while the bones still contain the last displayed pose.
    AdvanceMotionClock(dt);
    foreach(var p in bones)p.Value.localRotation=restLocal[p.Key];

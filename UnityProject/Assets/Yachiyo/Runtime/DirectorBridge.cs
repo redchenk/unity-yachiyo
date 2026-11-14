@@ -147,7 +147,7 @@ namespace Yachiyo {
      Debug.Log("DIRECTOR_AUDIO "+p.@event+" seq="+msg.seq+" current="+(msg.utteranceId==utterance));
      if(p.@event=="start"&&!string.IsNullOrEmpty(msg.utteranceId)){utterance=msg.utteranceId;mouthClock=-1;face.CloseAudioMouth();avatar.SpeechAudio(p.source=="speech");if(p.source=="speech"){if(p.neuralMotion){CancelPerformances("neural-speech",true);avatar.BeginSpeechMotion();}avatar.SetCharacterState("speaking",p.emotion,15000);StartPerformance(p.performance);}}
      else if(msg.utteranceId==utterance&&(p.@event=="pause"||p.@event=="resume")){face.CloseAudioMouth();avatar.SpeechAudio(p.@event=="resume");avatar.SpeechFrame(p.audioTimeMs/1000f,0);}
-     else if(msg.utteranceId==utterance){CancelSpeechPerformances(utterance);utterance="";face.CloseAudioMouth();avatar.SpeechAudio(false);avatar.EndSpeechMotion();EndPerformance();}
+     else if(msg.utteranceId==utterance){CancelSpeechPerformances(utterance);utterance="";face.CloseAudioMouth();avatar.SpeechAudio(false);avatar.EndSpeechMotion(p.continueMotion);EndPerformance();}
      break;
     case "motion":
      if(string.IsNullOrEmpty(utterance)||msg.utteranceId!=utterance||p.motion==null)return;
@@ -187,7 +187,7 @@ namespace Yachiyo {
     }
    }
    while(Time.unscaledTime-began<duration){if(version!=generation)yield break;yield return null;}
-   if(body)ui.FinishMotion();
+   if(body)ui.FinishMotion(performances.Count>0);
    Receipt(msg,"completed");Finish();
   }
   void Finish(){active=null;execution=null;}

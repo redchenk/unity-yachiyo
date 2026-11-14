@@ -17,6 +17,8 @@ namespace Yachiyo {
   int requestVersion;
   string streamSession,streamEndpoint;
   int streamSequence;
+  float streamLatency=.3f;
+  public float StreamRefillSeconds=>Mathf.Clamp(2+streamLatency*1.5f,2.4f,5f);
   public int RemoteChunks {get;private set;}
   public float LastGenerationSeconds {get;private set;}
   float yaw=0, pitch=8, distance=3.4f;
@@ -225,8 +227,8 @@ namespace Yachiyo {
   public string MotionStatus=>status;
   public void StopMotion(bool fromDirector=false){if(!fromDirector)LocalStopRequested?.Invoke();CancelMotionRequest();avatar.ReleaseMotion();status="已停止，正在等你。";}
   public void CancelMotionRequest(){CloseStream();requestVersion++;busy=false;}
-  public void PrepareNextMotion(){CancelMotionRequest();avatar.ReleaseMotion();}
-  public void FinishMotion(){CancelMotionRequest();avatar.ReleaseMotion();}
+  public void PrepareNextMotion(){CancelMotionRequest();avatar.AwaitNextMotion();}
+  public void FinishMotion(bool continuation){CancelMotionRequest();if(continuation)avatar.AwaitNextMotion();else avatar.ReleaseMotion();}
   void PlaySample(){CloseStream();requestVersion++;busy=false;try{var clip=JsonUtility.FromJson<MotionClip>(File.ReadAllText(Path.Combine(Application.streamingAssetsPath,"Motions","kimodo-official.json")));avatar.Play(clip,"官方动作样例");status="正在播放官方随仓库提供的动作，非本次生成。";}catch(Exception e){status="样例加载失败："+e.Message;}}
   public void RequestMotion(string text){prompt=text;SendPrompt();}
   void SendPrompt(){if(string.IsNullOrWhiteSpace(prompt))return;string s=prompt.Trim();if(s=="停止"){StopMotion();return;}
@@ -246,9 +248,9 @@ namespace Yachiyo {
   void CloseStream(){if(!string.IsNullOrEmpty(streamSession))StartCoroutine(DeleteStream(streamEndpoint,streamSession));streamSession=null;streamSequence=0;}
   IEnumerator DeleteStream(string endpoint,string session){using(var req=UnityWebRequest.Delete(endpoint+"/streams/"+session)){req.timeout=5;yield return req.SendWebRequest();}}
   IEnumerator StreamMotion(string text,int version){
-   string endpoint=serviceUrl;
+   string endpoint=serviceUrl;bool freshSession=false;
    if(string.IsNullOrEmpty(streamSession)||streamEndpoint!=endpoint){
-    CloseStream();
+    CloseStream();freshSession=true;
     using(var req=Post(endpoint+"/streams","{\"seed\":37}")){yield return req.SendWebRequest();
      if(req.result!=UnityWebRequest.Result.Success){Fail("实时动作会话创建失败。",version);yield break;}
      var session=JsonUtility.FromJson<MotionSession>(req.downloadHandler.text);
@@ -258,14 +260,15 @@ namespace Yachiyo {
    }
    string sessionId=streamSession;bool first=true;
    while(version==requestVersion&&streamSession==sessionId){
-    if(!first&&avatar.BufferedSeconds>.65f){yield return null;continue;}first=false;
-    var data=new StreamRequest{prompt=text,sequence=streamSequence,revision=version};
+    if(!first&&avatar.BufferedSeconds>StreamRefillSeconds){yield return null;continue;}first=false;
+    var data=new StreamRequest{prompt=text,sequence=streamSequence,revision=version};float requestedAt=Time.realtimeSinceStartup;
     using(var req=Post(endpoint+"/streams/"+sessionId+"/step",JsonUtility.ToJson(data))){
      status=avatar.Streaming?"正在连续生成："+text:"正在准备首段动作，首次启动需要加载模型…";
      yield return req.SendWebRequest();if(version!=requestVersion)yield break;
      if(req.result!=UnityWebRequest.Result.Success){CloseStream();avatar.Act("idle","待机");Fail("实时动作连接中断，请检查笔记本后重新发送。",version);yield break;}
      try{var motion=JsonUtility.FromJson<MotionClip>(req.downloadHandler.text);if(motion.revision!=version)yield break;
-      avatar.Enqueue(motion,text);streamSequence=motion.sequence;RemoteChunks++;LastGenerationSeconds=motion.generationSeconds;
+      if(freshSession){avatar.StartStream(motion,text);freshSession=false;}else avatar.Enqueue(motion,text);
+      streamLatency=Mathf.Max(Time.realtimeSinceStartup-requestedAt,streamLatency*.8f);streamSequence=motion.sequence;RemoteChunks++;LastGenerationSeconds=motion.generationSeconds;
       busy=false;status="连续生成中 · 每段 2 秒 · 本次 "+Mathf.RoundToInt(motion.generationSeconds*1000)+" 毫秒";
      }catch(Exception error){CloseStream();avatar.Act("idle","待机");Fail("动作数据无效："+error.Message,version);yield break;}
     }

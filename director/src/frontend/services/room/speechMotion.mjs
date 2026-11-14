@@ -49,12 +49,15 @@ export async function prepareSpeechMotion(buffer, { backend='windows', cancelled
     const job=await request('/jobs',{method:'POST',body:JSON.stringify({sampleRate:16000,pcm16:pcm16Base64(buffer),seed:crypto.getRandomValues(new Uint32Array(1))[0]&0x7fffffff})});
     id=job.id;
     const deadline=Date.now()+180000;
-    while(!chunks.length){
-      await poll();
+    let reserveSeconds=.75;
+    while(!complete && (!chunks.length || cursor/30 < reserveSeconds)){
+      const data=await poll();
+      if(chunks.length===1)reserveSeconds=Math.min(buffer.duration,Math.max(.75,Math.min(3.4,(chunks[0].generationSeconds||0)*1.3+.35)));
       if(Date.now()>deadline)throw new Error('StreamTalk 首段生成超时，请检查所选电脑的服务');
-      if(!chunks.length)await new Promise(resolve=>setTimeout(resolve,100));
+      if(!complete && (!chunks.length || cursor/30<reserveSeconds) && data.availableFrames<=cursor)await new Promise(resolve=>setTimeout(resolve,80));
     }
-    report({status:'ready',model:'StreamTalk',seconds:chunks[0].generationSeconds});
+    if(!chunks.length)throw new Error('StreamTalk 未返回动作帧');
+    report({status:'ready',model:'StreamTalk',seconds:chunks[0]?.generationSeconds,bufferedSeconds:cursor/30,reserveSeconds});
   } catch(error){clearInterval(cancelTimer);stop();throw error;}
   // Each packet is below the 64-KiB avatar bridge limit. A one-frame remainder
   // joins the prior packet because Unity validates at least two frames per clip.

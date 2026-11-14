@@ -3,6 +3,7 @@ using UnityEngine;
 namespace Yachiyo {
  public partial class AvatarMotion {
   bool speechActive;
+  float speechReportAge;
   float speechBlend,speechLevel,speechClock,speechAt,gestureClock,gestureDuration,gestureBlend,gestureStrength;
   float headClock,headDuration,headBlend,headStrength;
   bool timedGesture,timedHead;float gestureStart,headStart,gesturePrepare,gestureRelease,headPrepare,headRelease;
@@ -13,10 +14,10 @@ namespace Yachiyo {
   public string ConversationGesture=>string.IsNullOrEmpty(gesture)?headGesture:gesture;
 
   public void SpeechAudio(bool active){
-   if(active&&!speechActive){speechClock=0;speechLevel=0;}
-   speechActive=active;speechAt=Time.unscaledTime;
+   if(active&&!speechActive){if(NeuralSpeechMotion&&clip!=null)CaptureTransition(.18f);else speechClock=0;speechLevel=0;}
+   speechActive=active;speechAt=Time.unscaledTime;speechReportAge=0;
   }
-  public void SpeechFrame(float time,float level){speechClock=Mathf.Max(0,time);speechLevel=Mathf.Clamp01(level);speechAt=Time.unscaledTime;if(!speechActive)SpeechRenderClock=speechClock;}
+  public void SpeechFrame(float time,float level){speechClock=Mathf.Max(0,time);speechLevel=Mathf.Clamp01(level);speechAt=Time.unscaledTime;speechReportAge=0;if(!speechActive&&!NeuralSpeechMotion)SpeechRenderClock=speechClock;}
   public void Gesture(string type,float duration,float strength,string side){
    if(type=="head_tilt")return;
    if(type=="nod"||type=="shake_head"){
