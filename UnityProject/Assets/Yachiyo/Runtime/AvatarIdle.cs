@@ -3,10 +3,12 @@ using UnityEngine;
 
 namespace Yachiyo {
  public partial class AvatarMotion {
-  readonly System.Random idleRandom=new System.Random(27183);
+  readonly System.Random idleRandom=CreateIdleRandom();
   sealed class Drift {public float from,to,age,duration;public float Step(float dt,System.Random rng,float low,float high,float amplitude){age+=dt;if(age>=duration){from=to;to=((float)rng.NextDouble()*2-1)*amplitude;age=0;duration=low+(float)rng.NextDouble()*(high-low);}return Mathf.Lerp(from,to,Smooth5(age/duration));}}
   readonly Drift swayX=new Drift(),swayZ=new Drift(),leftWrist=new Drift(),rightWrist=new Drift(),fingerLeft=new Drift(),fingerRight=new Drift();
-  float lifeClock,breathPhase,breathPeriod=4.3f,breathAmplitude=1,weightFrom=.45f,weightTo=.65f,weightAge,weightDuration=18;
+  readonly Drift torsoYaw=new Drift(),torsoPitch=new Drift(),leftArm=new Drift(),rightArm=new Drift(),leftElbow=new Drift(),rightElbow=new Drift(),leftShoulder=new Drift(),rightShoulder=new Drift();
+  float lifeClock,breathPhase,breathPeriod=4.3f,breathAmplitude=1,weightFrom,weightTo,weightAge,weightDuration,weightTravel=3.5f,relaxedArms=1;
+  bool adjustedSameSide;
   float energy=1,gazeClock,gazeAt=2,gazeChangedAt,gazeYaw,gazePitch,headYaw;
   Vector3 leftFootRest,rightFootRest;Quaternion leftFootRotation,rightFootRotation;
   Vector3 leftCurlAxis,rightCurlAxis;
@@ -16,6 +18,12 @@ namespace Yachiyo {
   public float IdleGazePitch=>gazePitch;
   public int IdleWeightChanges {get;private set;}
   public int AttentionChanges {get;private set;}
+  static System.Random CreateIdleRandom(){
+   var args=Environment.GetCommandLineArgs();int index=Array.IndexOf(args,"--idle-seed");
+   // Reproducible only when explicitly requested by a native regression run.
+   if(index>=0&&index+1<args.Length&&int.TryParse(args[index+1],out int seed))return new System.Random(seed);
+   return new System.Random(Guid.NewGuid().GetHashCode());
+  }
   static readonly HumanBodyBones[] leftFingers={HumanBodyBones.LeftIndexProximal,HumanBodyBones.LeftIndexIntermediate,HumanBodyBones.LeftIndexDistal,HumanBodyBones.LeftMiddleProximal,HumanBodyBones.LeftMiddleIntermediate,HumanBodyBones.LeftMiddleDistal,HumanBodyBones.LeftRingProximal,HumanBodyBones.LeftRingIntermediate,HumanBodyBones.LeftRingDistal,HumanBodyBones.LeftLittleProximal,HumanBodyBones.LeftLittleIntermediate,HumanBodyBones.LeftLittleDistal};
   static readonly HumanBodyBones[] rightFingers={HumanBodyBones.RightIndexProximal,HumanBodyBones.RightIndexIntermediate,HumanBodyBones.RightIndexDistal,HumanBodyBones.RightMiddleProximal,HumanBodyBones.RightMiddleIntermediate,HumanBodyBones.RightMiddleDistal,HumanBodyBones.RightRingProximal,HumanBodyBones.RightRingIntermediate,HumanBodyBones.RightRingDistal,HumanBodyBones.RightLittleProximal,HumanBodyBones.RightLittleIntermediate,HumanBodyBones.RightLittleDistal};
   void InitializeIdle(){
@@ -23,6 +31,8 @@ namespace Yachiyo {
    leftFootRest=transform.InverseTransformPoint(bones[HumanBodyBones.LeftFoot].position);rightFootRest=transform.InverseTransformPoint(bones[HumanBodyBones.RightFoot].position);
    leftFootRotation=Quaternion.Inverse(transform.rotation)*bones[HumanBodyBones.LeftFoot].rotation;rightFootRotation=Quaternion.Inverse(transform.rotation)*bones[HumanBodyBones.RightFoot].rotation;
    leftCurlAxis=CurlAxis(true);rightCurlAxis=CurlAxis(false);
+   weightFrom=weightTo=(idleRandom.Next(2)==0?-1:1)*RandomRange(.55f,.85f);weightDuration=RandomRange(3.5f,6.5f);
+   breathPeriod=RandomRange(3.5f,5.2f);breathPhase=RandomRange(0,1);gazeAt=RandomRange(1.2f,3.5f);
   }
   Vector3 CurlAxis(bool left){
    var hand=bones[left?HumanBodyBones.LeftHand:HumanBodyBones.RightHand];
@@ -34,35 +44,55 @@ namespace Yachiyo {
   float Breath(float delay){float phase=Mathf.Repeat(breathPhase-delay/breathPeriod,1);return (phase<.38f?Smooth5(phase/.38f):1-Smooth5((phase-.38f)/.62f))*breathAmplitude;}
   void AdvanceLife(float dt){
    lifeClock+=dt;breathPhase+=dt/breathPeriod;
-   if(breathPhase>=1){breathPhase-=1;breathPeriod=RandomRange(3.6f,5.2f);breathAmplitude=RandomRange(.78f,1.08f);}
-   weightAge+=dt;if(weightAge>=weightDuration){weightFrom=weightTo;weightTo=-Mathf.Sign(weightTo)*RandomRange(.5f,.9f);weightAge=0;weightDuration=RandomRange(16,28);IdleWeightChanges++;}
+   if(breathPhase>=1){breathPhase-=1;breathPeriod=RandomRange(3.5f,5.2f);breathAmplitude=RandomRange(.78f,1.08f);}
+   weightAge+=dt;if(weightAge>=weightDuration){
+    weightFrom=weightTo;
+    // Occasionally readjust the same supporting leg. Never get stuck there;
+    // the next transfer crosses sides, with a newly sampled pace and dwell.
+    bool stay=!adjustedSameSide&&idleRandom.NextDouble()<.22;adjustedSameSide=stay;
+    weightTo=(stay?1:-1)*Mathf.Sign(weightTo)*RandomRange(stay?.35f:.65f,stay?.6f:.95f);
+    weightAge=0;weightTravel=RandomRange(2.8f,4.4f);weightDuration=RandomRange(7.5f,13.5f);IdleWeightChanges++;
+   }
    // Shift over several seconds, then settle on the supporting leg.
-   IdleWeight=Mathf.Lerp(weightFrom,weightTo,Smooth5(weightAge/4.5f));
+   IdleWeight=Mathf.Lerp(weightFrom,weightTo,Smooth5(weightAge/weightTravel));
    float desired=stateEmotion=="happy"||stateEmotion=="playful"?1.1f:stateMode=="listening"||stateEmotion=="sad"?.75f:1;
    energy=Mathf.MoveTowards(energy,desired,dt*.15f);
-   gazeClock+=dt;if(gazeClock>=gazeAt){gazeAt=gazeClock+RandomRange(2.2f,6.3f);gazeYaw=RandomRange(-3.8f,3.8f);gazePitch=RandomRange(-1.1f,1.3f);gazeChangedAt=lifeClock;AttentionChanges++;}
-   if(lifeClock-gazeChangedAt>.11f)headYaw=Mathf.Lerp(headYaw,gazeYaw*.45f,1-Mathf.Exp(-dt*2.8f));
+   gazeClock+=dt;if(gazeClock>=gazeAt){gazeAt=gazeClock+RandomRange(2.0f,5.8f);gazeYaw=RandomRange(-6.8f,6.8f);gazePitch=RandomRange(-1.4f,1.8f);gazeChangedAt=lifeClock;AttentionChanges++;}
+   if(lifeClock-gazeChangedAt>.11f)headYaw=Mathf.Lerp(headYaw,gazeYaw*.6f,1-Mathf.Exp(-dt*2.6f));
   }
   void ApplyNaturalIdle(float dt){
-   float x=swayX.Step(dt,idleRandom,5.1f,8.7f,.003f),z=swayZ.Step(dt,idleRandom,7.3f,11.4f,.002f);
-   bones[HumanBodyBones.Hips].position+=transform.TransformVector(new Vector3(IdleWeight*.023f+x,-.009f,z));
-   RotateWorld(HumanBodyBones.Hips,Vector3.forward,-IdleWeight*1.3f);
-   RotateWorld(HumanBodyBones.Spine,Vector3.forward,IdleWeight*.9f);
-   RotateWorld(HumanBodyBones.Chest,Vector3.forward,IdleWeight*.4f);
-   RotateLocal(HumanBodyBones.Spine,new Vector3(-Breath(.02f)*.23f*energy,0,0));
-   RotateLocal(HumanBodyBones.Chest,new Vector3(-Breath(.09f)*.5f*energy,0,0));
-   RotateLocal(HumanBodyBones.Neck,new Vector3(Breath(.13f)*.24f*energy,headYaw*.35f,0));
-   RotateLocal(HumanBodyBones.Head,new Vector3(Breath(.17f)*.49f*energy,headYaw*.65f,0));
-   RotateWorld(HumanBodyBones.LeftShoulder,Vector3.forward,-Breath(.12f)*.45f*energy);
-   RotateWorld(HumanBodyBones.RightShoulder,Vector3.forward,Breath(.18f)*.38f*energy);
-   RotateLocal(HumanBodyBones.LeftUpperArm,new Vector3(Breath(.19f)*.35f,0,0));
-   RotateLocal(HumanBodyBones.RightUpperArm,new Vector3(Breath(.24f)*.28f,0,0));
-   RotateLocal(HumanBodyBones.LeftLowerArm,new Vector3(Breath(.25f)*.4f,0,0));
-   RotateLocal(HumanBodyBones.RightLowerArm,new Vector3(Breath(.30f)*.32f,0,0));
-   float lw=leftWrist.Step(dt,idleRandom,4.6f,9.1f,1.5f),rw=rightWrist.Step(dt,idleRandom,6.2f,10.7f,1.2f);
-   RotateLocal(HumanBodyBones.LeftHand,new Vector3(Breath(.32f)*.3f,lw,0));RotateLocal(HumanBodyBones.RightHand,new Vector3(Breath(.37f)*.24f,rw,0));
-   FlexFingers(true,fingerLeft.Step(dt,idleRandom,5.5f,10.2f,1.7f));FlexFingers(false,fingerRight.Step(dt,idleRandom,7.4f,12.8f,1.5f));
+   float x=swayX.Step(dt,idleRandom,3.8f,7.3f,.005f),z=swayZ.Step(dt,idleRandom,5.7f,9.2f,.0035f);
+   bones[HumanBodyBones.Hips].position+=transform.TransformVector(new Vector3(IdleWeight*.04f+x,-.013f,z));
+   // Pelvis and spine counterbalance; no head roll or thinking-state trigger.
+   RotateWorld(HumanBodyBones.Hips,Vector3.forward,-IdleWeight*2.1f);
+   RotateWorld(HumanBodyBones.Spine,Vector3.forward,IdleWeight*1.35f);
+   RotateWorld(HumanBodyBones.Chest,Vector3.forward,IdleWeight*.75f);
+   float yaw=torsoYaw.Step(dt,idleRandom,4.1f,8.4f,3.4f),pitch=torsoPitch.Step(dt,idleRandom,5.3f,9.1f,1.4f);
+   RotateLocal(HumanBodyBones.Spine,new Vector3(pitch*.35f-Breath(.02f)*.5f*energy,yaw*.4f,0));
+   RotateLocal(HumanBodyBones.Chest,new Vector3(pitch*.65f-Breath(.09f)*1.15f*energy,yaw*.6f,0));
+   RotateLocal(HumanBodyBones.Neck,new Vector3((Breath(.13f)*.5f*energy-pitch*.5f),headYaw*.35f-yaw*.18f,0));
+   RotateLocal(HumanBodyBones.Head,new Vector3(Breath(.17f)*.7f*energy-pitch*.5f,headYaw*.65f-yaw*.32f,0));
+   RotateWorld(HumanBodyBones.LeftShoulder,Vector3.forward,-Breath(.12f)*.8f*energy+leftShoulder.Step(dt,idleRandom,3.7f,6.5f,.8f));
+   RotateWorld(HumanBodyBones.RightShoulder,Vector3.forward,Breath(.18f)*.7f*energy+rightShoulder.Step(dt,idleRandom,4.9f,8.1f,.7f));
+   // Independent, continuous pose targets: never mirrored beats or per-frame
+   // noise. An explicit conversational gesture smoothly takes over the arms.
+   relaxedArms=Mathf.MoveTowards(relaxedArms,speechActive||ConversationGestureActive?0:1,dt/.4f);
+   RelaxIdleArm(true,dt,relaxedArms);RelaxIdleArm(false,dt,relaxedArms);
+   FlexFingers(true,fingerLeft.Step(dt,idleRandom,3.2f,6.4f,3.5f));FlexFingers(false,fingerRight.Step(dt,idleRandom,4.3f,7.9f,3.1f));
    PlantFoot(true);PlantFoot(false);
+  }
+  void RelaxIdleArm(bool left,float dt,float amount){
+   float side=left?-1:1;
+   float upper=(left?leftArm:rightArm).Step(dt,idleRandom,left?3.4f:4.6f,left?7.2f:8.3f,4.5f);
+   float elbow=(left?leftElbow:rightElbow).Step(dt,idleRandom,left?4.3f:3.6f,left?8.8f:7.9f,7.5f);
+   float wrist=(left?leftWrist:rightWrist).Step(dt,idleRandom,left?3.1f:4.2f,left?6.8f:8.4f,5);
+   var arm=left?HumanBodyBones.LeftUpperArm:HumanBodyBones.RightUpperArm;
+   var forearm=left?HumanBodyBones.LeftLowerArm:HumanBodyBones.RightLowerArm;
+   var hand=left?HumanBodyBones.LeftHand:HumanBodyBones.RightHand;
+   RotateWorld(arm,Vector3.forward,side*(3+upper*.45f)*amount);
+   RotateWorld(arm,Vector3.right,-(4+upper+Breath(left?.19f:.27f)*.65f)*amount);
+   RotateWorld(forearm,Vector3.right,-(8+elbow+Breath(left?.26f:.33f)*.8f)*amount);
+   RotateLocal(hand,new Vector3(wrist*.45f,side*wrist,wrist*.2f)*amount);
   }
   void FlexFingers(bool left,float drift){
    var hand=bones[left?HumanBodyBones.LeftHand:HumanBodyBones.RightHand];var axis=hand.TransformDirection(left?leftCurlAxis:rightCurlAxis);
