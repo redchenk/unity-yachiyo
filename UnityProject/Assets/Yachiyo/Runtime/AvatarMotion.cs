@@ -80,9 +80,9 @@ namespace Yachiyo {
    Streaming=false;streamQueue.Clear();Initialize(); motion.Validate();CaptureTransition();
    // An idle weight shift is not locomotion. Anchor the new clip to the planted
    // stance so repeated idle/action cycles cannot accumulate that small offset.
-   var origin=clip!=null?transform.InverseTransformPoint(bones[HumanBodyBones.Hips].position):restRoot+idleOrigin;
+   var origin=clip!=null&&!streamRecovering?transform.InverseTransformPoint(bones[HumanBodyBones.Hips].position):restRoot+idleOrigin;
    motionOrigin=new Vector3(origin.x,0,origin.z);
-   HoldingMotion=false;MotionRevision++;clip=motion;clock=0;CurrentAction=label;MotionSource=motion.source;
+   streamRecovering=false;MotionRevision++;clip=motion;clock=0;CurrentAction=label;MotionSource=motion.source;
    mapping=new HumanBodyBones[motion.bones.Length];for(int i=0;i<mapping.Length;i++) mapping[i]=Enum.TryParse(motion.bones[i],out HumanBodyBones b)?b:HumanBodyBones.LastBone;
    startRoot=motion.frames[0].root;
   }
@@ -93,7 +93,7 @@ namespace Yachiyo {
   }
   public void DiscardFuture()=>streamQueue.Clear();
   public void BeginSpeechMotion(){
-   HoldForNextMotion(15);NeuralSpeechMotion=true;SpeechMotionFrames=0;SpeechMotionUnderruns=0;SpeechRenderClock=0;speechChunkStart=0;speechUnderrun=false;
+   ReleaseMotion();NeuralSpeechMotion=true;SpeechMotionFrames=0;SpeechMotionUnderruns=0;SpeechRenderClock=0;speechChunkStart=0;speechUnderrun=false;
   }
   public void AddSpeechMotion(MotionClip motion){
    if(!NeuralSpeechMotion)return;
@@ -108,46 +108,17 @@ namespace Yachiyo {
    }
    SpeechMotionFrames+=motion.frames.Length;
   }
-  public void EndSpeechMotion(bool continuation=false){if(NeuralSpeechMotion)HoldForNextMotion(continuation?12:.65f);}
-  public void Act(string action,string label) {Initialize();if(clip!=null)KeepRootOrigin();CaptureTransition(action=="idle"?1.15f:.5f);HoldingMotion=false;NeuralSpeechMotion=false;Streaming=false;streamQueue.Clear();clip=null;localAction=action;actionTime=0;CurrentAction=label;MotionSource="本地动作";}
+  public void EndSpeechMotion(){if(NeuralSpeechMotion)ReleaseMotion();}
+  public void Act(string action,string label) {Initialize();if(action=="idle"){ReleaseMotion();return;}if(clip!=null&&!streamRecovering)KeepRootOrigin();CaptureTransition();streamRecovering=false;NeuralSpeechMotion=false;Streaming=false;streamQueue.Clear();clip=null;localAction=action;actionTime=0;CurrentAction=label;MotionSource="本地动作";}
   public void Tick(float dt) {
-   Initialize();actionTime+=dt;blendClock+=dt;AdvanceLife(dt);
-   if(HoldingMotion){if(holdClock>=holdLimit)Act("idle","待机");else{ApplyHeldPose(dt);RememberPose(dt);return;}}
+   Initialize();actionTime+=dt;if(!transitionPending&&(!NeuralSpeechMotion||speechActive||clip==null))blendClock+=dt;AdvanceLife(dt);
+   // Capture exits while the bones still contain the last displayed pose.
+   AdvanceMotionClock(dt);
    foreach(var p in bones)p.Value.localRotation=restLocal[p.Key];
    bones[HumanBodyBones.Hips].localPosition=hipsRest;
    bones[HumanBodyBones.Hips].position+=transform.TransformVector(idleOrigin);
-   if(clip!=null) {
-    if(NeuralSpeechMotion){
-     // Web audio reports at about 30 Hz. Interpolate the already generated
-     // poses at render cadence between reports instead of holding alternate
-     // display frames. Bound prediction to 50 ms; stale audio stops advancing.
-     float predicted=speechClock+(speechActive?Mathf.Clamp(Time.unscaledTime-speechAt,0,.05f):0);
-     if(speechActive)SpeechRenderClock=Mathf.Max(SpeechRenderClock,predicted);
-     float renderTime=Mathf.Min(SpeechRenderClock,Mathf.Max(0,(SpeechMotionFrames-1)/30f));
-     clock=Mathf.Max(0,renderTime-speechChunkStart);
-     while(streamQueue.Count>0&&clock>=clip.frames.Length/clip.fps){
-      speechChunkStart+=clip.frames.Length/clip.fps;clip=streamQueue.Dequeue();clock=Mathf.Max(0,renderTime-speechChunkStart);
-     }
-     bool underrun=speechClock>SpeechMotionFrames/30f+.05f;
-     if(underrun&&!speechUnderrun)SpeechMotionUnderruns++;speechUnderrun=underrun;
-    }else clock+=dt;
-    if(!NeuralSpeechMotion&&Streaming&&clock>=clip.frames.Length/clip.fps){
-     if(streamQueue.Count>0){clock-=clip.frames.Length/clip.fps;clip=streamQueue.Dequeue();CurrentAction=clip.prompt;MotionSource=clip.source;}
-     else {if(clock-dt<clip.frames.Length/clip.fps)StreamUnderruns++;clock=Mathf.Min(clock,clip.frames.Length/clip.fps);}
-    }
-    float pos=Mathf.Clamp(clock*clip.fps,0,clip.frames.Length-1);int a=(int)pos,b=Mathf.Min(a+1,clip.frames.Length-1);float mix=pos-a;
-    var first=clip.frames[a];var second=clip.frames[b];
-    if(Streaming&&streamQueue.Count>0&&clock>=clip.Duration){first=clip.frames[clip.frames.Length-1];second=streamQueue.Peek().frames[0];mix=Mathf.Clamp01((clock-clip.Duration)*clip.fps);}
-    // Global T-pose deltas avoid assuming that SOMA and FBX local bone axes match.
-    for(int j=0;j<mapping.Length;j++)if(bones.TryGetValue(mapping[j],out var t)) {
-     var q=Quaternion.Slerp(first.rotations[j],second.rotations[j],mix);
-     t.rotation=transform.rotation*q*restGlobal[mapping[j]];
-    }
-    var root=Vector3.Lerp(first.root,second.root,mix);
-    root.x-=startRoot.x;root.z-=startRoot.z;
-    root*=hipHeight/clip.referenceHipHeight;
-    bones[HumanBodyBones.Hips].position=transform.TransformPoint(root+motionOrigin);
-    if(!Streaming&&clock>clip.Duration+0.15f)Act("idle","待机");
+   if(clip!=null&&!streamRecovering) {
+    ApplyModelPose(clock);
    } else {
     RotateWorld(HumanBodyBones.LeftUpperArm,Vector3.forward,70);
     RotateWorld(HumanBodyBones.RightUpperArm,Vector3.forward,-70);
@@ -188,10 +159,9 @@ namespace Yachiyo {
      RotateLocal(HumanBodyBones.Head,new Vector3(0,6f*Mathf.Sin(turn*Mathf.Deg2Rad),0));
     }
     if(localAction=="idle")ApplyNaturalIdle(dt);
-    if(localAction!="idle"&&actionTime>actionDuration+.55f)Act("idle","待机");
    }
    ApplyConversation(dt,clip!=null,localAction!="idle");
-   ApplyTransition();
+   ApplyTransition(dt);
    if(followPointer&&clip==null&&localAction=="idle"&&!speechActive&&!ConversationGestureActive) {
     float x=Mathf.Clamp((Input.mousePosition.x/Mathf.Max(1,Screen.width)-0.5f)*2,-1,1),y=Mathf.Clamp((Input.mousePosition.y/Mathf.Max(1,Screen.height)-0.5f)*2,-1,1);
     RotateLocal(HumanBodyBones.Head,new Vector3(-y*7,x*12,0));

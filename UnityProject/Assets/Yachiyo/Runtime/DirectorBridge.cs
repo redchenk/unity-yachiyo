@@ -145,9 +145,9 @@ namespace Yachiyo {
      if(p.@event=="start")AwaitingContinuation=false;
      else if(msg.utteranceId==utterance&&p.@event!="pause"&&p.@event!="resume")AwaitingContinuation=p.@event=="end"&&p.continueMotion;
      Debug.Log("DIRECTOR_AUDIO "+p.@event+" seq="+msg.seq+" current="+(msg.utteranceId==utterance));
-     if(p.@event=="start"&&!string.IsNullOrEmpty(msg.utteranceId)){utterance=msg.utteranceId;mouthClock=-1;face.CloseAudioMouth();avatar.SpeechAudio(p.source=="speech");if(p.source=="speech"){if(p.neuralMotion){CancelPerformances("neural-speech");ui.StopMotion(true);avatar.BeginSpeechMotion();}avatar.SetCharacterState("speaking",p.emotion,15000);StartPerformance(p.performance);}}
+     if(p.@event=="start"&&!string.IsNullOrEmpty(msg.utteranceId)){utterance=msg.utteranceId;mouthClock=-1;face.CloseAudioMouth();avatar.SpeechAudio(p.source=="speech");if(p.source=="speech"){if(p.neuralMotion){CancelPerformances("neural-speech",true);avatar.BeginSpeechMotion();}avatar.SetCharacterState("speaking",p.emotion,15000);StartPerformance(p.performance);}}
      else if(msg.utteranceId==utterance&&(p.@event=="pause"||p.@event=="resume")){face.CloseAudioMouth();avatar.SpeechAudio(p.@event=="resume");avatar.SpeechFrame(p.audioTimeMs/1000f,0);}
-     else if(msg.utteranceId==utterance){CancelSpeechPerformances(utterance);utterance="";face.CloseAudioMouth();avatar.SpeechAudio(false);avatar.EndSpeechMotion(p.continueMotion);EndPerformance();}
+     else if(msg.utteranceId==utterance){CancelSpeechPerformances(utterance);utterance="";face.CloseAudioMouth();avatar.SpeechAudio(false);avatar.EndSpeechMotion();EndPerformance();}
      break;
     case "motion":
      if(string.IsNullOrEmpty(utterance)||msg.utteranceId!=utterance||p.motion==null)return;
@@ -175,7 +175,7 @@ namespace Yachiyo {
      if(!started){Receipt(msg,"started");started=true;}
      body=true;began=Time.unscaledTime;
     }else switch(action.type){
-     case "wave":case "bow":case "turn":ui.StopMotion(true);avatar.Act(action.type,action.type);body=true;break;
+     case "wave":case "bow":case "turn":ui.CancelMotionRequest();avatar.Act(action.type,action.type);body=true;break;
      case "nod":case "shake_head":case "explain":case "open_palms":case "emphasis":case "lean_in":case "lean_left":case "lean_right":case "sway":case "breathe":
       avatar.Gesture(action.type,Mathf.Clamp(action.durationMs>0?action.durationMs:duration*1000,350,15000)/1000,action.intensity>0?action.intensity:Mathf.Max(.4f,p.intensity),action.side);break;
      case "blink":face.ForceBlink();break;
@@ -187,7 +187,7 @@ namespace Yachiyo {
     }
    }
    while(Time.unscaledTime-began<duration){if(version!=generation)yield break;yield return null;}
-   if(body)ui.FinishMotion(performances.Count>0);
+   if(body)ui.FinishMotion();
    Receipt(msg,"completed");Finish();
   }
   void Finish(){active=null;execution=null;}
@@ -219,12 +219,12 @@ namespace Yachiyo {
    for(int i=0;i<count;i++){var queued=performances.Dequeue();if(queued.utteranceId==id)Receipt(queued,"cancelled","speech-ended");else performances.Enqueue(queued);}
    avatar.EndConversationGesture();
   }
-  void CancelPerformances(string reason){
+  void CancelPerformances(string reason,bool preserveMotion=false){
    generation++;if(execution!=null)StopCoroutine(execution);execution=null;
    if(active!=null)Receipt(active,"cancelled",reason);active=null;
    while(performances.Count>0)Receipt(performances.Dequeue(),"cancelled",reason);
    if(avatar)avatar.EndConversationGesture();
-   if(ui&&avatar)ui.StopMotion(true);
+   if(ui&&avatar){if(preserveMotion)ui.CancelMotionRequest();else ui.StopMotion(true);}
   }
   void Clear(string reason){AwaitingContinuation=false;CancelPerformances(reason);if(avatar)avatar.ResetConversation();utterance="";mouthClock=-1;seen.Clear();emotionUntil=0;gazeUntil=0;if(face){face.CloseAudioMouth();EndPerformance();face.SetLookTarget(null);}}
   void OnDestroy(){if(ui)ui.LocalStopRequested-=LocalStop;lifetime?.Cancel();Clear("destroyed");if(gaze)Destroy(gaze.gameObject);}

@@ -27,18 +27,18 @@ namespace Yachiyo {
    ScreenCapture.CaptureScreenshot(path+"-idle.png");yield return new WaitForSeconds(.5f);
    var source=JsonUtility.FromJson<MotionClip>(File.ReadAllText(Path.Combine(Application.streamingAssetsPath,"Motions/kimodo-official.json")));
    var a=Pose(source,Mathf.Min(35,source.frames.Length-1));var b=Pose(source,Mathf.Min(100,source.frames.Length-1));
-   avatar.Play(a,"衔接 A");yield return new WaitForSeconds(.9f);avatar.HoldForNextMotion(12);
-   float until=Time.realtimeSinceStartup+1.6f;while(Time.realtimeSinceStartup<until){yield return null;if(avatar.PoseMode=="idle")report.unexpectedIdleFrames++;}
+   avatar.Play(a,"衔接 A");yield return new WaitForSeconds(.9f);avatar.ReleaseMotion();
+   float until=Time.realtimeSinceStartup+.2f;while(Time.realtimeSinceStartup<until)yield return null;
    var previous=tracked.Select(id=>avatar.animator.GetBoneTransform(id).localRotation).ToArray();var root=hips.position;avatar.Play(b,"衔接 B");until=Time.realtimeSinceStartup+.8f;
    while(Time.realtimeSinceStartup<until){yield return new WaitForEndOfFrame();if(avatar.PoseMode=="idle")report.unexpectedIdleFrames++;
     for(int i=0;i<tracked.Length;i++){var q=avatar.animator.GetBoneTransform(tracked[i]).localRotation;report.largestTransitionStep=Mathf.Max(report.largestTransitionStep,Quaternion.Angle(previous[i],q));previous[i]=q;}
     report.largestRootStep=Mathf.Max(report.largestRootStep,Vector3.Distance(root,hips.position));root=hips.position;report.finite&=cloth.Native.Finite;
    }
-   ScreenCapture.CaptureScreenshot(path+"-joined.png");yield return new WaitForSeconds(.3f);avatar.Act("idle","待机");yield return new WaitForSeconds(1.6f);report.returnedToIdle=avatar.PoseMode=="idle"&&!avatar.HoldingMotion;
+   ScreenCapture.CaptureScreenshot(path+"-joined.png");yield return new WaitForSeconds(.3f);avatar.Act("idle","待机");yield return new WaitForSeconds(1.6f);report.returnedToIdle=avatar.PoseMode=="idle"&&!avatar.SettlingToIdle;
    lp=left.position;rp=right.position;
    for(int cycle=0;cycle<3;cycle++){
-    avatar.HoldForNextMotion();yield return new WaitForSeconds(.2f);avatar.Play(a,"站位保持");yield return new WaitForSeconds(.9f);
-    avatar.HoldForNextMotion();yield return new WaitForSeconds(.2f);avatar.Act("idle","待机");yield return new WaitForSeconds(1.6f);
+    avatar.ReleaseMotion();yield return new WaitForSeconds(.2f);avatar.Play(a,"站位保持");yield return new WaitForSeconds(.9f);
+    avatar.ReleaseMotion();yield return new WaitForSeconds(.2f);avatar.Act("idle","待机");yield return new WaitForSeconds(1.6f);
     report.repeatStanceDrift=Mathf.Max(report.repeatStanceDrift,Vector3.Distance(left.position,lp),Vector3.Distance(right.position,rp));
    }
    report.passed=report.finite&&report.returnedToIdle&&report.unexpectedIdleFrames==0&&report.maxFootDrift<.001f&&report.repeatStanceDrift<.001f&&report.hipRange>.015f&&report.maxSkinningError<.0001f&&report.maxSeamGap<.0001f&&report.largestTransitionStep<8&&report.largestRootStep<.02f&&report.blinks>=3&&report.attentionChanges>=4;

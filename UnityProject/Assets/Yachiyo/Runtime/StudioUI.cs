@@ -223,9 +223,10 @@ namespace Yachiyo {
   public event Action LocalStopRequested;
   public bool MotionRequestBusy=>busy;
   public string MotionStatus=>status;
-  public void StopMotion(bool fromDirector=false){if(!fromDirector)LocalStopRequested?.Invoke();CloseStream();requestVersion++;busy=false;avatar.Act("idle","待机");status="已停止，正在等你。";}
-  public void PrepareNextMotion(){CloseStream();requestVersion++;busy=false;avatar.HoldForNextMotion(15);}
-  public void FinishMotion(bool continuation){CloseStream();requestVersion++;busy=false;avatar.HoldForNextMotion(continuation?12:.65f);}
+  public void StopMotion(bool fromDirector=false){if(!fromDirector)LocalStopRequested?.Invoke();CancelMotionRequest();avatar.ReleaseMotion();status="已停止，正在等你。";}
+  public void CancelMotionRequest(){CloseStream();requestVersion++;busy=false;}
+  public void PrepareNextMotion(){CancelMotionRequest();avatar.ReleaseMotion();}
+  public void FinishMotion(){CancelMotionRequest();avatar.ReleaseMotion();}
   void PlaySample(){CloseStream();requestVersion++;busy=false;try{var clip=JsonUtility.FromJson<MotionClip>(File.ReadAllText(Path.Combine(Application.streamingAssetsPath,"Motions","kimodo-official.json")));avatar.Play(clip,"官方动作样例");status="正在播放官方随仓库提供的动作，非本次生成。";}catch(Exception e){status="样例加载失败："+e.Message;}}
   public void RequestMotion(string text){prompt=text;SendPrompt();}
   void SendPrompt(){if(string.IsNullOrWhiteSpace(prompt))return;string s=prompt.Trim();if(s=="停止"){StopMotion();return;}
@@ -285,6 +286,6 @@ namespace Yachiyo {
    using(var req=UnityWebRequest.Get(endpoint+"/jobs/"+job.id+"/motion")){req.timeout=30;yield return req.SendWebRequest();if(version!=requestVersion)yield break;if(req.result!=UnityWebRequest.Result.Success){Fail("动作下载失败。",version);yield break;}
     try{var clip=JsonUtility.FromJson<MotionClip>(req.downloadHandler.text);if(job.cached)clip.source+=" · 缓存";avatar.Play(clip,text);status="动作已就绪"+(job.cached?"（缓存）":"")+"。";busy=false;}catch(Exception e){Fail("动作数据无效："+e.Message,version);}}
   }
-  void Fail(string message,int version){if(version!=requestVersion)return;busy=false;status=message;if(avatar.HoldingMotion)avatar.Act("idle","待机");}
+  void Fail(string message,int version){if(version!=requestVersion)return;busy=false;status=message;}
  }
 }
