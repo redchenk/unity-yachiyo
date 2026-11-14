@@ -46,6 +46,23 @@ test('platform data paths are persistent and support explicit portable storage',
   assert.equal(studioDataDirectory({ env: { YACHIYO_DATA_DIR: './portable' } }), path.resolve('portable'));
 });
 
+test('Windows launcher routes both generation and cancellation to its local service', async () => {
+  const dataDir=fs.mkdtempSync(path.join(os.tmpdir(),'yachiyo-windows-route-')),requests=[];
+  const previous={backend:process.env.YACHIYO_LOCAL_MOTION_BACKEND,url:process.env.YACHIYO_LOCAL_MOTION_URL};
+  process.env.YACHIYO_LOCAL_MOTION_BACKEND='desktop';process.env.YACHIYO_LOCAL_MOTION_URL='http://127.0.0.1:8787/';
+  const runtime=await startDesktopServer({resourceRoot:root,dataDir,port:0,services:{},fetchImpl:async(url)=>{requests.push(url);return new Response('{}');}});
+  try {
+    await post(runtime.origin,'/api/speech-motion/jobs?backend=desktop',{sampleRate:16000,pcm16:'AAA='});
+    const removed=await fetch(`${runtime.origin}/api/speech-motion/jobs/${'a'.repeat(24)}?backend=desktop`,{method:'DELETE',headers:{'Content-Type':'application/json'}});
+    assert.equal(removed.status,200);
+    await fetch(`${runtime.origin}/api/speech-motion/health?backend=windows`);
+    assert.deepEqual(requests,['http://127.0.0.1:8787/speech/jobs',`http://127.0.0.1:8787/speech/jobs/${'a'.repeat(24)}`,'http://127.0.0.1:18787/speech/health?after=0']);
+  } finally {
+    await runtime.close();fs.rmSync(dataDir,{recursive:true,force:true});
+    for(const [key,value] of [['YACHIYO_LOCAL_MOTION_BACKEND',previous.backend],['YACHIYO_LOCAL_MOTION_URL',previous.url]]){if(value===undefined)delete process.env[key];else process.env[key]=value;}
+  }
+});
+
 test('bundled SQLite preserves records across service restarts without Docker', { timeout: 40_000 }, async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yachiyo-builtin-memory-'));
   let manager = makeManager(dataDir);

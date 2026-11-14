@@ -55,7 +55,9 @@ export async function startDesktopServer({ resourceRoot, dataDir, services, port
         }
         const after = url.searchParams.get('after') || '0';
         if (!/^\d{1,4}$/.test(after)) return json(res, 400, { error: 'Invalid frame cursor' });
-        const base = { windows: 'http://127.0.0.1:18787', ubuntu: 'http://127.0.0.1:8787', desktop: 'http://127.0.0.1:28787' }[backend];
+        const base = backend === process.env.YACHIYO_LOCAL_MOTION_BACKEND && process.env.YACHIYO_LOCAL_MOTION_URL
+          ? process.env.YACHIYO_LOCAL_MOTION_URL.replace(/\/$/, '')
+          : { windows: 'http://127.0.0.1:18787', ubuntu: 'http://127.0.0.1:8787', desktop: 'http://127.0.0.1:28787' }[backend];
         cancellation = requestSignal(req, res, 10000);
         try {
           const body = req.method === 'POST' ? JSON.stringify(await readJson(req, 2600000)) : undefined;

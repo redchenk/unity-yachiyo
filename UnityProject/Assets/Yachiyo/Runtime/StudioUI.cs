@@ -94,7 +94,7 @@ namespace Yachiyo {
    return true;
   }
   void UpdateCameraInput(){
-   if(UnifiedDirectorHost.IsBundled){
+   if(UnifiedDirectorHost.IsBundled&&Application.platform==RuntimePlatform.OSXPlayer){
     var input=UnifiedDirectorHost.ConsumeCameraInput();if(DirectorCameraLocked)return;
     float dx=input[0]*UnifiedDirectorHost.PixelScale,dy=input[1]*UnifiedDirectorHost.PixelScale;
     if(input[3]>.5f){framing+=new Vector2(dx/Mathf.Max(view.pixelWidth,1),-dy/Mathf.Max(view.pixelHeight,1));ClampFraming();}

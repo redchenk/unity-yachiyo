@@ -16,14 +16,16 @@ namespace Yachiyo {
   int connectionVersion;
   bool advancedService,serviceFocusRequested;
   public static bool IsMotionBackend(string backend)=>backend=="windows"||backend=="ubuntu"||backend=="desktop";
-  static string DefaultServiceUrl(string backend)=>backend=="desktop"?"http://127.0.0.1:28787":backend=="windows"?"http://127.0.0.1:18787":"http://127.0.0.1:8787";
+  static string DefaultServiceUrl(string backend){var local=Environment.GetEnvironmentVariable("YACHIYO_LOCAL_MOTION_URL");if(backend==Environment.GetEnvironmentVariable("YACHIYO_LOCAL_MOTION_BACKEND")&&!string.IsNullOrEmpty(local))return local;return backend=="desktop"?"http://127.0.0.1:28787":backend=="windows"?"http://127.0.0.1:18787":"http://127.0.0.1:8787";}
   static string ProfileKey(string backend)=>"motion-service-"+backend;
   static string ConnectionState(string backend)=>Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Personal),"Library","Application Support","Tsukuyomi","MotionConnections",backend+".status");
   void InitializeServiceProfiles(string[] args){
    string legacy=PlayerPrefs.GetString("motion-service",serviceUrl);
    SelectedBackend=PlayerPrefs.GetString("motion-backend",legacy.Contains(":18787")?"windows":"ubuntu");
+   var localBackend=Environment.GetEnvironmentVariable("YACHIYO_LOCAL_MOTION_BACKEND");if(IsMotionBackend(localBackend))SelectedBackend=localBackend;
    if(!IsMotionBackend(SelectedBackend))SelectedBackend="ubuntu";
    serviceUrl=PlayerPrefs.GetString(ProfileKey(SelectedBackend),PlayerPrefs.HasKey("motion-backend")?DefaultServiceUrl(SelectedBackend):legacy);
+   if(IsMotionBackend(localBackend))serviceUrl=DefaultServiceUrl(SelectedBackend);
    int platform=Array.IndexOf(args,"--motion-platform");if(platform>=0&&platform+1<args.Length){SelectedBackend=IsMotionBackend(args[platform+1])?args[platform+1]:"ubuntu";serviceUrl=PlayerPrefs.GetString(ProfileKey(SelectedBackend),DefaultServiceUrl(SelectedBackend));}
    int endpoint=Array.IndexOf(args,"--service-url");if(endpoint>=0&&endpoint+1<args.Length)serviceUrl=args[endpoint+1].TrimEnd('/');
    if(Array.IndexOf(args,"--show-service-settings")>=0){settings=true;serviceFocusRequested=true;}
