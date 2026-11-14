@@ -1,17 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createRequire } from 'node:module';
+import { createNeteaseClient } from './netease-client.mjs';
 
 export function createMusicAdapter(dataDir, { client } = {}) {
   const cookieFile = path.join(dataDir, 'netease-cookie.txt');
   const streams = new Map();
   const localFiles = new Map();
-  let api = client;
+  const api = client ? null : createNeteaseClient(dataDir);
   let cookie = fs.existsSync(cookieFile) ? fs.readFileSync(cookieFile, 'utf8') : '';
   const call = async (name, params = {}) => {
-    api ||= createRequire(import.meta.url)('@neteasecloudmusicapienhanced/api');
-    const result = await api[name]({ ...params, cookie, timestamp: Date.now() });
+    const input = { ...params, cookie, timestamp: Date.now() };
+    const result = client ? await client[name](input) : await api.call(name, input);
     return result.body;
   };
   const account = async () => {
@@ -82,5 +82,5 @@ export function createMusicAdapter(dataDir, { client } = {}) {
     }
     throw Object.assign(new Error('Unknown music route'), { status: 404 });
   }
-  return { handle, localFile: id => localFiles.get(id), streamUrl: token => { const item = streams.get(token); return item?.expires > Date.now() ? item.url : null; } };
+  return { handle, close: () => api?.close(), localFile: id => localFiles.get(id), streamUrl: token => { const item = streams.get(token); return item?.expires > Date.now() ? item.url : null; } };
 }

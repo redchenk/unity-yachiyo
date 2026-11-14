@@ -37,6 +37,8 @@ namespace Yachiyo {
   IEnumerator Start(){
    font=Resources.Load<Font>("NotoSansCJKsc-Regular");
    if(!IsBundled){enabled=false;yield break;}
+   // Override a previous Windows release's saved 1280x800 window on every boot.
+   if(Windows)Screen.SetResolution(1920,1080,FullScreenMode.Windowed);
    string root=DirectorRoot;
    stateDir=Path.Combine(Path.GetTempPath(),"yachiyo-director-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(stateDir);
    string state=Path.Combine(stateDir,"ready.json");

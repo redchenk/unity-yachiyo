@@ -146,5 +146,5 @@ export async function startDesktopServer({ resourceRoot, dataDir, services, port
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   origin = `http://127.0.0.1:${server.address().port}`;
   const avatarBridge = attachAvatarBridge(server, { allowedOrigin: () => origin, observe: avatarObserver });
-  return { server, origin, close: async () => { avatarBridge.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } };
+  return { server, origin, close: async () => { avatarBridge.close(); await music.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } };
 }

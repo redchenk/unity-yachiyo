@@ -46,6 +46,8 @@ for file in sdk.glob('*'):
     if file.is_file() and ('license' in file.name.lower() or 'notice' in file.name.lower()):shutil.copy2(file,stage/'native'/file.name)
 manifest={str(file.relative_to(destination)).replace('\\','/'):hashlib.sha256(file.read_bytes()).hexdigest() for file in sorted(destination.rglob('*')) if file.is_file()}
 (destination/'SHA256.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
-archive=shutil.make_archive(str(ART/'Yachiyo-Windows-x64'),'zip',ART,destination.name)
+pending=Path(shutil.make_archive(str(ART/'Yachiyo-Windows-x64.pending'),'zip',ART,destination.name))
+archive=ART/'Yachiyo-Windows-x64.zip'
+pending.replace(archive)
 print(archive)
 print('SHA256',hashlib.sha256(Path(archive).read_bytes()).hexdigest())
