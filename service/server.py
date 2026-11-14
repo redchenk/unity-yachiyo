@@ -174,7 +174,9 @@ def make_handler(jobs, hosted=None, speech=None):
             path = urlparse(self.path).path
             if speech and path == "/speech/health":
                 return self.send(200, {"provider": "streamtalk", "state": speech.provider.state,
-                                      "model": speech.provider.model_name, "stats": speech.provider.stats})
+                                      "model": speech.provider.model_name, "stats": speech.provider.stats,
+                                      "alignment": speech.aligner.state if speech.aligner else "unavailable",
+                                      "alignmentDevice": speech.aligner.device if speech.aligner else ""})
             match = re.fullmatch(r"/speech/jobs/([a-f0-9]{24})", path)
             if speech and match:
                 try:

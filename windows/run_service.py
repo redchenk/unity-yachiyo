@@ -39,7 +39,7 @@ def main():
                          root=str(ROOT), updated=time.time())), encoding="utf-8")
     record("loading")
     server = None
-    jobs = hosted = None
+    jobs = hosted = aligner = None
     try:
         from service.dip_provider import DiPProvider
         from service.server import Jobs, make_handler
@@ -52,7 +52,9 @@ def main():
         # The same manual start/stop entry owns both models and one GPU queue.
         from service.streamtalk_provider import StreamTalkProvider
         from service.speech_jobs import SpeechJobs
-        speech = SpeechJobs(StreamTalkProvider(), jobs.pool)
+        from service.speech_alignment import SpeechAligner
+        aligner = SpeechAligner(ROOT)
+        speech = SpeechJobs(StreamTalkProvider(), jobs.pool, aligner)
         if (ROOT / "models/streamtalk/SMPLX_NEUTRAL_2020.npz").is_file():
             def warm_speech():
                 try: speech.provider.load()
@@ -68,6 +70,8 @@ def main():
     finally:
         if server:
             server.server_close()
+        if aligner:
+            aligner.close()
         for queue in (jobs, hosted):
             if queue:
                 queue.pool.shutdown(wait=False, cancel_futures=True)

@@ -6,6 +6,7 @@ namespace Yachiyo {
   float speechReportAge;
   float speechBlend,speechLevel,speechClock,speechAt,gestureClock,gestureDuration,gestureBlend,gestureStrength;
   float headClock,headDuration,headBlend,headStrength;
+  bool neuralGesture,neuralHead;
   bool timedGesture,timedHead;float gestureStart,headStart,gesturePrepare,gestureRelease,headPrepare,headRelease;
   string gesture="",gestureSide="right";
   string headGesture="",headSide="right";
@@ -21,17 +22,17 @@ namespace Yachiyo {
   public void Gesture(string type,float duration,float strength,string side){
    if(type=="head_tilt")return;
    if(type=="nod"||type=="shake_head"){
-    timedHead=false;
+    timedHead=false;neuralHead=false;
     headGesture=type;headClock=0;headDuration=Mathf.Clamp(duration,.35f,15f);headStrength=Mathf.Clamp01(strength);headSide=side;return;
    }
-   timedGesture=false;
+   timedGesture=false;neuralGesture=false;
    gesture=type;gestureClock=0;gestureDuration=Mathf.Clamp(duration,.35f,15f);gestureStrength=Mathf.Clamp01(strength);gestureSide=side;
   }
   public void GestureTimed(string type,float start,float duration,float prepare,float release,float strength,string side){
    Gesture(type,duration,strength,side);
    if(type=="head_tilt")return;
-   if(type=="nod"||type=="shake_head"){timedHead=true;headStart=start;headPrepare=prepare;headRelease=release;}
-   else{timedGesture=true;gestureStart=start;gesturePrepare=prepare;gestureRelease=release;}
+   if(type=="nod"||type=="shake_head"){timedHead=true;neuralHead=NeuralSpeechMotion;headStart=start;headPrepare=prepare;headRelease=release;}
+   else{timedGesture=true;neuralGesture=NeuralSpeechMotion;gestureStart=start;gesturePrepare=prepare;gestureRelease=release;}
   }
   static float SpeechEnvelope(float clock,float length,float prepare,float release){
    if(clock<0||clock>=length)return 0;
@@ -48,16 +49,22 @@ namespace Yachiyo {
    // A real playback frame owns this layer. Short sentences start immediately;
    // stalls, pause and cancel release it without queuing a delayed body action.
    speechBlend=Mathf.MoveTowards(speechBlend,speechActive&&!modelPlaying&&!localPlaying?1:0,dt/(speechActive ? .2f : .28f));
-   gestureClock=timedGesture?speechClock-gestureStart:gestureClock+dt;
+   float mediaClock=NeuralSpeechMotion?SpeechRenderClock:speechClock;
+   gestureClock=timedGesture?mediaClock-gestureStart:gestureClock+dt;
    float desired=timedGesture?SpeechEnvelope(gestureClock,gestureDuration,gesturePrepare,gestureRelease):gestureClock<gestureDuration?ActionEnvelope(gestureClock,gestureDuration):0;
    gestureBlend=Mathf.MoveTowards(gestureBlend,desired,dt/.18f);
    float g=gestureBlend*gestureStrength;
-   headClock=timedHead?speechClock-headStart:headClock+dt;
+   headClock=timedHead?mediaClock-headStart:headClock+dt;
    headBlend=Mathf.MoveTowards(headBlend,timedHead?SpeechEnvelope(headClock,headDuration,headPrepare,headRelease):headClock<headDuration?ActionEnvelope(headClock,headDuration):0,dt/.18f);
 
    // Playback and UI states do not invent gestures. Only an explicit AI cue
    // controls this layer, and a generated full-body pose owns all its bones.
-   if(modelPlaying||localPlaying)return;
+   if(gestureBlend<=.001f&&gestureClock>=gestureDuration)neuralGesture=false;
+   if(headBlend<=.001f&&headClock>=headDuration)neuralHead=false;
+   SemanticCorrectionDegrees=0;
+   if(localPlaying)return;
+   if(neuralGesture||neuralHead){ApplySemanticCorrection(g,headBlend*headStrength);return;}
+   if(modelPlaying)return;
    float h=headBlend*headStrength,headBeat=Mathf.Sin(headClock*5);
    switch(headGesture){
     case "nod":RotateLocal(HumanBodyBones.Neck,new Vector3(5*headBeat*h,0,0));RotateLocal(HumanBodyBones.Head,new Vector3(6*headBeat*h,0,0));break;

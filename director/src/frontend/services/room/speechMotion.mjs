@@ -16,8 +16,9 @@ export function pcm16Base64(buffer) {
   return btoa(binary);
 }
 
-export async function prepareSpeechMotion(buffer, { backend='windows', cancelled=()=>false, fetchImpl=fetch, report=()=>{} }={}) {
+export async function prepareSpeechMotion(buffer, { backend='windows', cancelled=()=>false, fetchImpl=fetch, report=()=>{}, spokenText='' }={}) {
   if (!buffer || buffer.duration < .05 || buffer.duration > 60) throw new Error('StreamTalk 支持 0.05–60 秒的单段语音');
+  let alignment=null, alignmentStatus="unavailable";
   let id='', stopped=false, cursor=0, complete=false, sending=false;
   const chunks=[], controller=new AbortController();
   if (!['windows','ubuntu','desktop'].includes(backend)) throw new Error('未知动作服务');
@@ -38,6 +39,8 @@ export async function prepareSpeechMotion(buffer, { backend='windows', cancelled
   const cancelTimer=setInterval(()=>{if(cancelled()){clearInterval(cancelTimer);stop();}},100);
   const poll = async () => {
     const data=await request(`/jobs/${id}?after=${cursor}`);
+    alignmentStatus=data.alignmentStatus || "unavailable";
+    if(data.alignment?.text===spokenText)alignment=data.alignment;
     if(data.motion){
       if(data.motion.startFrame!==cursor)throw new Error('StreamTalk 动作帧不连续');
       cursor+=data.motion.frames.length; chunks.push(data.motion);
@@ -46,7 +49,7 @@ export async function prepareSpeechMotion(buffer, { backend='windows', cancelled
     return data;
   };
   try {
-    const job=await request('/jobs',{method:'POST',body:JSON.stringify({sampleRate:16000,pcm16:pcm16Base64(buffer),seed:crypto.getRandomValues(new Uint32Array(1))[0]&0x7fffffff})});
+    const job=await request('/jobs',{method:'POST',body:JSON.stringify({sampleRate:16000,spokenText,pcm16:pcm16Base64(buffer),seed:crypto.getRandomValues(new Uint32Array(1))[0]&0x7fffffff})});
     id=job.id;
     const deadline=Date.now()+180000;
     let reserveSeconds=.75;
@@ -57,7 +60,13 @@ export async function prepareSpeechMotion(buffer, { backend='windows', cancelled
       if(!complete && (!chunks.length || cursor/30<reserveSeconds) && data.availableFrames<=cursor)await new Promise(resolve=>setTimeout(resolve,80));
     }
     if(!chunks.length)throw new Error('StreamTalk 未返回动作帧');
-    report({status:'ready',model:'StreamTalk',seconds:chunks[0]?.generationSeconds,bufferedSeconds:cursor/30,reserveSeconds});
+    // Alignment runs concurrently with GPU motion in its isolated worker. Bound any extra
+    // startup wait; late alignment never reschedules an already playing line.
+    const alignmentDeadline=Date.now()+1200;
+    while(spokenText && alignmentStatus==='pending' && Date.now()<alignmentDeadline){
+      await new Promise(resolve=>setTimeout(resolve,60)); await poll();
+    }
+    report({status:'ready',model:'StreamTalk',alignment:alignment?.source || (spokenText?'unavailable':'not-needed'),alignmentSeconds:alignment?.seconds,seconds:chunks[0]?.generationSeconds,bufferedSeconds:cursor/30,reserveSeconds});
   } catch(error){clearInterval(cancelTimer);stop();throw error;}
   // Each packet is below the 64-KiB avatar bridge limit. A one-frame remainder
   // joins the prior packet because Unity validates at least two frames per clip.
@@ -75,7 +84,7 @@ export async function prepareSpeechMotion(buffer, { backend='windows', cancelled
     }
   }
   return {
-    id,
+    id, alignment,
     async start(driver,audio){
       if(sending)return; sending=true;
       try{

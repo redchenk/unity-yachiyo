@@ -12,13 +12,13 @@ export function createSpeechMotionBuffer({ decode, backend, enabled, report = ()
     entry.motion?.stop();
     entries.delete(audio);
   }
-  function get(audio, { cancelled = () => false, prefetch = false, neuralMotion = true } = {}) {
+  function get(audio, { cancelled = () => false, prefetch = false, neuralMotion = true, spokenText = '' } = {}) {
     if (!enabled() || !neuralMotion) { release(audio); return Promise.resolve(null); }
     const host = backend();
     let entry = entries.get(audio);
-    if (entry && entry.backend === host) return entry.promise;
+    if (entry && entry.backend === host && entry.spokenText === spokenText) return entry.promise;
     release(audio);
-    entry = { backend: host, cancelled: false, motion: null };
+    entry = { backend: host, spokenText, cancelled: false, motion: null };
     entries.set(audio, entry);
     const stale = () => entry.cancelled || cancelled() || backend() !== host || !enabled();
     entry.promise = (async () => {
@@ -27,7 +27,7 @@ export function createSpeechMotionBuffer({ decode, backend, enabled, report = ()
       if (!pcm) return null;
       report({ status: 'loading', model: 'StreamTalk', prefetch });
       const motion = await prepare(pcm, {
-        backend: host, cancelled: stale,
+        backend: host, spokenText, cancelled: stale,
         report: detail => report({ ...detail, prefetch })
       });
       if (stale()) { motion.stop(); throw abort(); }

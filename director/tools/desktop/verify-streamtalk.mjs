@@ -46,7 +46,7 @@ try{
  };
  window.addEventListener('yachiyo:speech-motion',e=>result.motionStatuses.push(e.detail));
  speech=__avatarTools.createLive2DSpeechPlayer();let audio;
- const play=speech.enqueue('声と体の動きを確認します。',{sourceLang:'ja',performance:__avatarTools.affectRuntime.plan({intent:'explain',gestures:[{type:'explain'}]}),onStart:d=>{audio=d.audio;firstAudio=audio;}});
+ const play=speech.enqueue('声と体の動きを確認します。',{sourceLang:'ja',performance:__avatarTools.affectRuntime.plan({intent:'explain',gestures:[]}),onStart:d=>{audio=d.audio;firstAudio=audio;}});
  await wait(()=>audio,'speech never started');
  // Let the audio device start and the one-shot diagnostic PNG finish before
  // measuring display cadence. Real audio stalls must hold, not invent motion.

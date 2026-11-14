@@ -9,8 +9,8 @@ import numpy as np
 
 
 class SpeechJobs:
-    def __init__(self, provider, pool):
-        self.provider, self.pool = provider, pool
+    def __init__(self, provider, pool, aligner=None):
+        self.provider, self.pool, self.aligner = provider, pool, aligner
         self.lock = threading.Lock()
         self.jobs = {}
 
@@ -26,6 +26,8 @@ class SpeechJobs:
             raise ValueError("Invalid PCM") from None
         if len(pcm) % 2 or not 1600 <= len(pcm) <= 16000 * 2 * 60:
             raise ValueError("Audio must be 0.05–60 seconds")
+        text = raw.get("spokenText", "")
+        if not isinstance(text, str) or len(text) > 1200: raise ValueError("Invalid spoken text")
         samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
         with self.lock:
             now = time.monotonic()
@@ -37,6 +39,8 @@ class SpeechJobs:
             key = secrets.token_hex(12)
             self.jobs[key] = dict(id=key, status="queued", created=now, cancel=threading.Event(),
                                   frames=[], motion=None, error="", seconds=0.)
+            job = self.jobs[key]
+            job["alignment"] = self.aligner.submit(text, samples, job["cancel"].is_set) if text and self.aligner else None
             self.pool.submit(self._run, key, samples, seed)
         return {"id": key, "status": "queued"}
 
@@ -75,6 +79,14 @@ class SpeechJobs:
             size = 53 if len(job["frames"])-after == 53 else 52
             frames = job["frames"][after:after+size]
             result = {k:job[k] for k in ("id", "status", "error", "seconds")}
+            future = job["alignment"]
+            result["alignmentStatus"] = "pending" if future and not future.done() else "unavailable"
+            if future and future.done() and not future.cancelled():
+                try: alignment = future.result()
+                except Exception: alignment = None
+                if alignment:
+                    result["alignment"] = alignment
+                    result["alignmentStatus"] = "ready"
             result["availableFrames"] = len(job["frames"])
             if frames:
                 result["motion"] = dict(job["motion"], frames=frames, startFrame=after)

@@ -80,11 +80,11 @@ python -m unittest discover -s tests -v
 - LLM 在同一次回复中输出 `performance`：安慰、感谢、解释、打趣、惊讶、克制拒绝或倾听。持续情绪在会话内跨句保留、随时间衰减，并进入下一次回复的提示；规则降级避免把“没有生气”“别哭，我陪你”演成愤怒或哭泣。
 - 表情、眼神、语速、身体幅度共用这份计划。关闭 StreamTalk 时，`gestures: []` 表示不执行局部手势，保留眨眼、呼吸和轻微姿势变化；安慰时使用关切的柔和表情，感谢时有短暂移开视线。
 - `explain`、`open_palms`、`emphasis`、`nod`、`shake_head`、`lean_in` 等交谈手势只有 AI 明确输出时才在 Unity 就地执行，有准备、表达和收回阶段。身体和头部可同时执行，动作不再拉伸到整句长度。完整模型动作继续使用现有 Windows／Ubuntu 服务。
-- 一句语音结束后，属于该句的延迟动作不会继续排队播放。模型播放期间不叠加本地头部或手臂手势，避免破坏生成姿态。
+- 一句语音结束后，属于该句的延迟动作不会继续排队播放。StreamTalk 播放时，只有绑定实际语音时间的 AI 提示可以施加有限幅度的局部修正；它不会切换身体动作或修改根节点、腿部和肩部绑定。
 - 表情和视线在音频实际开始时生效，句末回到较淡的当前情绪，而非立即清空。口型继续走 `YachiyoFaceController.SetAudioMouth`。
 - 直接输入新消息或点麦克风会取消旧回复、音频预取和旧动作。全程语音输入可勾选「允许语音插话（建议戴耳机）」；默认仍防回声，勾选后用浏览器回声消除后的持续语音能量触发打断。麦克风仍需手动开启。
 
-当前对齐使用合成音频的起音与真实播放时钟。文本锚点只有在具备最终日语文本的可靠词时间时才执行；本项目尚未部署强制对齐服务，不用字符数估算冒充词级同步。GPT-SoVITS 已接入 0.9–1.1 倍 `speed_factor`；保留原参考音频与其转写，不把情绪指令塞入 `prompt_text`，也不声称它支持独立音高控制。情绪语音的音色和听感仍需参考音频标定与真人试听。
+当前语义对齐使用最终日语台词与实际合成音频的词时间，详见下方「语义与动作对齐」。无词时间时跳过短语动作，不用字符数估算冒充词级同步。GPT-SoVITS 已接入 0.9–1.1 倍 `speed_factor`；保留原参考音频与其转写，不把情绪指令塞入 `prompt_text`，也不声称它支持独立音高控制。情绪语音的音色和听感仍需参考音频标定与真人试听。
 
 表演计划实机回归：`node director/tools/desktop/verify-performance.mjs`。实际页面插话回归：`node director/tools/desktop/verify-interruption.mjs`。两者使用固定回复/合成音频，结果保存在本机 `artifacts/performance-validation/`。
 
@@ -144,3 +144,22 @@ YACHIYO_VERIFY_BACKEND=desktop node director/tools/desktop/verify-streamtalk.mjs
 
 
 轨迹与延迟补偿更新：根节点和骨骼旋转改用跨包的三次平滑曲线，减少 20/30 FPS 模型采样点之间的速度突变。DiP 根据请求耗时，在剩余缓冲低于 2.4–5 秒阈值时提前生成；StreamTalk 根据首窗口耗时准备播放缓冲。短时预测只延续已有 AI 轨迹，不生成新的语义动作，也不无限外推。人为造成约 800 ms 动作缺帧的真实 GPU 测试通过，文字动作连续 13 段无欠载，20 秒混合动作采样约 59.6 FPS；详见验证记录。
+
+
+## 语义与动作对齐
+
+LLM 在每个 BEAT 的 `performance.semanticUnits` 中提供少量语义单元，包含稳定 `id`、中文意思 `sourceText`、最终日语短语 `spokenText`、`intent` 和可选 `gesture`。例如「慢慢说」对应「ゆっくり話して」的 `open_palms`；「我在听」对应「ちゃんと聞いているよ」的小幅 `nod`。空单元或无 gesture 不补动作，仍禁止思考歪头。翻译发生改写时，现有翻译请求同时返回按 id 的新日语绑定；缺失、重复歧义或文本不一致的锚点不执行。
+
+最终播放 PCM 和日语文本随同一个 StreamTalk 任务送入服务。[Qwen3-ForcedAligner](https://github.com/QwenLM/Qwen3-ASR#forcedaligner-usage) 在独立依赖环境对齐，词时间映射回精确 UTF-16 文本范围，并按日语实际顺序安排动作。预生成时并行准备；动作就绪后至多额外等待 1.2 秒对齐，迟到结果不会修改正在播放的计划。没有可靠对齐时继续模型动作并跳过短语提示，不重新播放或猜测时间。
+
+Unity 用同一语音媒体时钟执行限幅前臂／手腕、轻点头、摇头或胸部关注修正。保留 StreamTalk 全身轨迹和原有轨迹预测；不更改肩袖绑定、下肢或根位移。前臂修正若进一步进入躯干保护体积则拒绝该修正，这不是通用布料碰撞求解器。安慰／倾听的提示幅度更小；没有语义提示时不会新增循环手势。暂停、取消、过期均随原句执行。
+
+对齐模型及依赖不入库。Windows 动作环境安装方式：
+
+1. `python tools/fetch_alignment.py` 下载固定版本官方权重（SHA-256 校验），放入动作服务根目录的 `models/forced-aligner`。
+2. 在动作电脑运行 `runtime\python.exe windows\install_alignment.py`；只向 `runtime-alignment/site-packages` 安装依赖，不修改 GPT-SoVITS 或已有动作 Python 包。
+3. 更新 `service/` 和 `windows/run_service.py`，使用原「关闭／启动动作服务」入口重启。对齐子进程自动预热并跟随父服务退出，不需要额外手动启动。`/speech/health` 返回 `alignment` 和 `alignmentDevice`。
+
+默认 12 GB 及以上 GPU 使用 BF16；低显存机器保留 CPU 路径，也可用 `YACHIYO_ALIGNMENT_DEVICE=cpu` 指定。CPU 对齐较慢，可能超过播放准备预算而跳过语义提示。当前实机验证目标是台式机 Windows／RX 9070 XT，笔记本及 Ubuntu 的新增对齐模块尚未实机验收。日语词时间是模型预测结果，不是人工标注；语义效果仍取决于 LLM 规划与实际观看。
+
+真实语音回归：`node director/tools/desktop/verify-semantics.mjs /absolute/japanese.wav /absolute/semantic-plan.json`，配置含 `text`（音频的准确日语台词）和 `performance.semanticUnits`。语音文件作为实际 TTS 响应重放；对齐和身体动作必须来自真实模型，结果保存在本地 `artifacts/semantic-alignment/native/`。

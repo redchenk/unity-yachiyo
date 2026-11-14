@@ -18,6 +18,7 @@ namespace Yachiyo {
    public float[] maxVisemes=new float[5];public string lastReceipt,motionSource;
    public float speechPlaybackWeight,maxSpeechPlaybackWeight,cameraX,cameraY,cameraYaw,cameraPitch,cameraDistance;
    public Vector3 leftHand,rightHand,screenHead;public Quaternion headLocal,neckLocal;public string characterState;public bool followPointer;public string gesture;
+   public float semanticCorrection,maxSemanticCorrection;public int semanticFrames;public string semanticUnit,cueTiming;
    public string performanceIntent,faceEmotion,performanceGaze,lastCue;public int cuesFired,performanceClock,lastCueClock;public float gestureAmount;
   }
   void Start(){var args=Environment.GetCommandLineArgs();int p=Array.IndexOf(args,"--verify-director");if(p<0||p+1>=args.Length){enabled=false;return;}path=args[p+1];}
@@ -36,6 +37,7 @@ namespace Yachiyo {
     priorNeuralArm=arm;hadNeuralArm=true;
    }else hadNeuralArm=false;
    report.mouthOpen=face.AudioMouthOpen;report.lastReceipt=bridge.LastReceipt;
+   report.semanticCorrection=bridge.avatar.SemanticCorrectionDegrees;report.maxSemanticCorrection=Mathf.Max(report.maxSemanticCorrection,report.semanticCorrection);if(report.semanticCorrection>.01f)report.semanticFrames++;report.semanticUnit=bridge.LastSemanticUnit;report.cueTiming=bridge.LastCueTiming;
    report.performanceIntent=bridge.PerformanceIntent;report.faceEmotion=face.Emotion.ToString();report.performanceGaze=bridge.PerformanceGaze;report.cuesFired=bridge.PerformanceCuesFired;report.performanceClock=bridge.PerformanceClock;report.gestureAmount=bridge.PerformanceGestureAmount;report.lastCue=bridge.LastCue;report.lastCueClock=bridge.LastCueClock;
    report.speechPlaybackWeight=bridge.avatar.SpeechPlaybackWeight;report.maxSpeechPlaybackWeight=Mathf.Max(report.maxSpeechPlaybackWeight,report.speechPlaybackWeight);report.gesture=bridge.avatar.ConversationGesture;
    var animator=bridge.avatar.animator;report.leftHand=animator.GetBoneTransform(HumanBodyBones.LeftHand).position;report.rightHand=animator.GetBoneTransform(HumanBodyBones.RightHand).position;

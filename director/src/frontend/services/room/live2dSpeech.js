@@ -1,3 +1,4 @@
+import { needsSemanticTranslation, translationBindingsPrompt, parseTranslatedPerformance } from './bilingualPerformance.mjs';
 import { attachAudioMouthAnalyser } from './audioMouthAnalyser.js';
 import { affectRuntime, compilePerformanceTimeline, publishPerformance } from './performancePlan.mjs';
 import { createSpeechMotionBuffer } from './speechMotionBuffer.mjs';
@@ -239,10 +240,11 @@ function japaneseTtsTranslatorPrompt(options = {}) {
   return [
     'You are a Japanese line adapter for TTS.',
     'Translate the user-provided spoken line into natural Japanese that is easy to read aloud.',
-    'Output only the Japanese spoken line. Do not use Markdown or explanations.',
+    needsSemanticTranslation(options.performance) ? 'Output the JSON schema specified below.' : 'Output only the Japanese spoken line. Do not use Markdown or explanations.',
     'Remove all parenthesized action hints, asterisk actions, stage directions, emotion labels, pose descriptions, and asides.',
     'Keep names, VTuber flavor, and the intended emotional delivery.',
-    ttsEmotionGuide(options)
+    ttsEmotionGuide(options),
+    translationBindingsPrompt(options.performance)
   ].join('\n');
 }
 
@@ -252,7 +254,7 @@ async function translateForJapaneseTts(text, options = {}) {
   const sourceLanguage = declaredLanguage === 'auto' ? detectTextLang(source) : declaredLanguage;
   if (!source) return null;
   if (sourceLanguage === FORCED_TTS_LANGUAGE) {
-    return { text: source, textLang: FORCED_TTS_LANGUAGE };
+    return { text: source, textLang: FORCED_TTS_LANGUAGE, performance: options.performance };
   }
   const settings = readRoomLLMSettings();
   if (!settings.apiKey || !settings.apiUrl) return null;
@@ -275,7 +277,7 @@ async function translateForJapaneseTts(text, options = {}) {
       }, LLM_TRANSLATION_TIMEOUT_MS, 'Japanese TTS translation');
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.message || `日文翻译失败：LLM ${response.status}`);
-      translated = cleanTtsText(result.data?.reply || '');
+      translated = result.data?.reply || '';
     } else {
       const model = settings.model || 'gpt-4o-mini';
       const apiUrl = normalizeOpenAIUrl(settings.apiUrl, model, settings.provider);
@@ -291,7 +293,7 @@ async function translateForJapaneseTts(text, options = {}) {
               model: settings.model || 'gpt-5.5',
               instructions: systemPrompt,
               input: source,
-              max_output_tokens: 240
+              max_output_tokens: needsSemanticTranslation(options.performance) ? 600 : 240
             }
           : {
               model,
@@ -300,14 +302,15 @@ async function translateForJapaneseTts(text, options = {}) {
                 { role: 'user', content: source }
               ],
               temperature: isKimiChatTarget(apiUrl, model) ? 1 : 0.2,
-              max_tokens: 240
+              max_tokens: needsSemanticTranslation(options.performance) ? 600 : 240
             })
       }, LLM_TRANSLATION_TIMEOUT_MS, 'Japanese TTS translation');
       if (!response.ok) throw new Error(`日文翻译失败：LLM ${response.status}`);
-      translated = cleanTtsText(pickReply(await response.json()));
+      translated = pickReply(await response.json());
     }
     if (!translated) return null;
-    return { text: translated, textLang: FORCED_TTS_LANGUAGE };
+    const parsed = needsSemanticTranslation(options.performance) ? parseTranslatedPerformance(translated, options.performance, cleanTtsText) : { text: cleanTtsText(translated) };
+    return parsed ? { ...parsed, textLang: FORCED_TTS_LANGUAGE } : null;
   } catch (_) {
     // Never pass non-Japanese fallback text into the Japanese character voice.
     return null;
@@ -418,7 +421,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
   const speechQueue = [];
   const audioMeters = new WeakMap();
   const audioBlobs = new WeakMap(), audioTiming = new WeakMap(), audioDecoded = new WeakMap(), audioMotions = new WeakMap();
-  const audioDecoding = new WeakMap();
+  const audioDecoding = new WeakMap(), audioPlans = new WeakMap();
   const motionReport = detail => window.dispatchEvent(new CustomEvent('yachiyo:speech-motion', { detail }));
   const motionBuffer = createSpeechMotionBuffer({
     decode: preparePerformanceAudio,
@@ -723,6 +726,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         promptLang: FORCED_TTS_LANGUAGE
       }), ttsText, signal);
       audio.dataset.speechText = ttsText;
+      if (translatedLine.performance) audioPlans.set(audio, translatedLine.performance);
       return audio;
     }
 
@@ -745,6 +749,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       }
       const audio = await createAudioFromBlob(await response.blob());
       audio.dataset.speechText = ttsText;
+      if (translatedLine.performance) audioPlans.set(audio, translatedLine.performance);
       return audio;
     });
   }
@@ -798,9 +803,16 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       if (!audio || motionPrefetchItem !== next || next.cancelled || token !== queueToken) return;
       return motionBuffer.get(audio, {
         prefetch: true, neuralMotion: next.options.neuralMotion,
+        spokenText: alignmentText(audio, next.options),
         cancelled: () => token !== queueToken || next.cancelled || isQueueItemExpired(next)
       });
     }).catch(() => {}); // Playback owns error reporting and the voice-only fallback.
+  }
+
+  function alignmentText(audio, options) {
+    const text = audio.dataset.speechText || '';
+    const plan = audioPlans.get(audio) || options.performance;
+    return plan?.spokenText === text && plan?.gestures?.some(g => g.anchored && g.start >= 0) ? text : '';
   }
 
   async function playInternal(text, options = {}, token = queueToken, preparedAudioPromise = null, onPlaybackStart = null) {
@@ -855,6 +867,7 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
       try {
         const motion = await motionBuffer.get(audio, {
           neuralMotion: options.neuralMotion,
+          spokenText: alignmentText(audio, options),
           cancelled: () => token !== queueToken || (options.expiresAt > 0 && Date.now() > options.expiresAt)
         });
         if (motion) audioMotions.set(audio, motion);
@@ -872,8 +885,8 @@ export function createLive2DSpeechPlayer({ onState } = {}) {
         if (currentAudio !== audio || audio.ended) return;
         const finalText = audio.dataset.speechText || speechText;
         if (plannedPerformance === undefined) plannedPerformance = window.TSUKUYOMI_AVATAR_DRIVER?.mode === 'unity'
-          ? compilePerformanceTimeline(options.performance || affectRuntime.plan({}, finalText), {
-              ...audioTiming.get(audio), duration: audioTiming.get(audio)?.duration || audio.duration || 0, text: finalText
+          ? compilePerformanceTimeline(audioPlans.get(audio) || options.performance || affectRuntime.plan({}, finalText), {
+              ...audioTiming.get(audio), words: audioMotions.get(audio)?.alignment?.words || [], alignmentSource: audioMotions.get(audio)?.alignment?.source || "", duration: audioTiming.get(audio)?.duration || audio.duration || 0, text: finalText
             }) : null;
         const plan = plannedPerformance;
         window.TSUKUYOMI_AVATAR_DRIVER?.audioStart(audio, { source: 'speech', turnId: options.turnId, performance: plan, neuralMotion:audioMotions.has(audio) });

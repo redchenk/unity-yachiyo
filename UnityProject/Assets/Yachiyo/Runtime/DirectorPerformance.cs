@@ -8,7 +8,7 @@ namespace Yachiyo {
    public float intensity,energy,gestureAmount;public PerformanceCue[] cues;
   }
   [Serializable]public class PerformanceCue {
-   public string type,side,timingSource;public float startMs,strokeMs,durationMs,prepareMs,releaseMs,intensity;
+   public string type,side,timingSource,semanticId,intent;public float startMs,strokeMs,durationMs,prepareMs,releaseMs,intensity;
   }
   PerformancePlan speechPlan;
   bool[] fired;string affectEmotion="neutral";float affectStrength=.2f,affectAt,nextAffect;
@@ -19,6 +19,8 @@ namespace Yachiyo {
   public string PerformanceGaze {get;private set;}="camera";
   public string LastCue {get;private set;}="";
   public int LastCueClock {get;private set;}
+  public string LastSemanticUnit {get;private set;}="";
+  public string LastCueTiming {get;private set;}="";
   void StartPerformance(PerformancePlan plan){
    speechPlan=plan!=null&&plan.version==1?plan:null;
    avatar.EndConversationGesture();
@@ -30,7 +32,6 @@ namespace Yachiyo {
    Emotion(plan.emotion,Mathf.Clamp(plan.intensity,.15f,.8f),15000);emotionUntil=0;gazeUntil=0;
   }
   void AdvancePerformance(int ms){
-   if(avatar.NeuralSpeechMotion)return;
    if(speechPlan==null||fired==null)return;
    for(int i=0;i<fired.Length;i++){
     var cue=speechPlan.cues[i];
@@ -38,8 +39,11 @@ namespace Yachiyo {
     fired[i]=true;
     // Late frames never play an obsolete gesture after its speech moment.
     if(ms>cue.startMs+cue.durationMs||Array.IndexOf(actions,cue.type)<0)continue;
+    if(!float.IsFinite(cue.startMs+cue.durationMs+cue.prepareMs+cue.releaseMs+cue.intensity)||cue.durationMs<200||cue.durationMs>4000||cue.prepareMs<50||cue.releaseMs<50)continue;
+    // A delayed cue after the stroke would add an unrelated late gesture.
+    if(ms>cue.strokeMs+180)continue;
     avatar.GestureTimed(cue.type,cue.startMs/1000,cue.durationMs/1000,cue.prepareMs/1000,cue.releaseMs/1000,cue.intensity,cue.side);
-    LastCue=cue.type;LastCueClock=ms;PerformanceCuesFired++;
+    LastCue=cue.type;LastCueClock=ms;LastSemanticUnit=cue.semanticId;LastCueTiming=cue.timingSource;PerformanceCuesFired++;
    }
   }
   void RestoreAffect(){
@@ -47,7 +51,7 @@ namespace Yachiyo {
    float decay=Mathf.Exp(-Mathf.Max(0,Time.unscaledTime-affectAt)/90);
    Emotion(affectEmotion,affectStrength*decay,1000);emotionUntil=0;
   }
-  void EndPerformance(){speechPlan=null;fired=null;RestoreAffect();if(face&&ui&&ui.view)face.SetLookTarget(ui.view.transform);}
+  void EndPerformance(){avatar.EndConversationGesture();speechPlan=null;fired=null;RestoreAffect();if(face&&ui&&ui.view)face.SetLookTarget(ui.view.transform);}
   void UpdatePerformanceGaze(){
    if(!face||!ui||!ui.view)return;
    if(speechPlan==null){if(active==null&&emotionUntil==0&&Time.unscaledTime>nextAffect){nextAffect=Time.unscaledTime+1;RestoreAffect();}return;}
