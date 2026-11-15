@@ -22,9 +22,9 @@ namespace Yachiyo {
 #if YACHIYO_MAGICA
    if(!furisodeSource)return sample;
    var b=bindings.Single(x=>x.renderer==furisodeSource);var mesh=new Mesh();b.renderer.BakeMesh(mesh);
-   var actual=mesh.vertices;var expected=new Vector3[actual.Length];
+   var actual=mesh.vertices;var raw=new Vector3[actual.Length];var expected=new Vector3[actual.Length];
    for(int i=0;i<actual.Length;i++){
-    actual[i]=b.renderer.transform.TransformPoint(actual[i]);var w=b.weights[i];var p=b.vertices[i];
+    raw[i]=b.renderer.transform.TransformPoint(actual[i]);actual[i]=DisplayContactPoint(b.renderer,i,raw[i]);var w=b.weights[i];var p=b.vertices[i];
     expected[i]=Skin(b,w.boneIndex0,w.weight0,p)+Skin(b,w.boneIndex1,w.weight1,p)+Skin(b,w.boneIndex2,w.weight2,p)+Skin(b,w.boneIndex3,w.weight3,p);
     if(sleeveFixedMask[i]){sample.fixedVertices++;sample.maxFixedError=Mathf.Max(sample.maxFixedError,Vector3.Distance(expected[i],actual[i]));}
    }
@@ -33,7 +33,9 @@ namespace Yachiyo {
    for(int t=0;t<tris.Length;t+=3)for(int j=0;j<3;j++){
     int a=tris[t+j],c=tris[t+(j+1)%3];if(furisodeMask[a]==furisodeMask[c])continue;
     float reference=Mathf.Max(Vector3.Distance(b.initial[a],b.initial[c]),Vector3.Distance(expected[a],expected[c]));
-    sample.maxBoundaryStretch=Mathf.Max(sample.maxBoundaryStretch,Vector3.Distance(actual[a],actual[c])-reference);
+    float stretch=Vector3.Distance(actual[a],actual[c])-reference;
+    if(stretch>sample.maxBoundaryStretch&&stretch>.035f)Debug.Log("CLOTH_SEAM a="+a+" c="+c+" raw="+(Vector3.Distance(raw[a],raw[c])-reference)+" visible="+stretch+" boneA="+b.bones[b.weights[a].boneIndex0].name+" boneC="+b.bones[b.weights[c].boneIndex0].name+" contactA="+Vector3.Distance(raw[a],actual[a])+" contactC="+Vector3.Distance(raw[c],actual[c]));
+    sample.maxBoundaryStretch=Mathf.Max(sample.maxBoundaryStretch,stretch);
    }Destroy(mesh);
 #endif
    return sample;

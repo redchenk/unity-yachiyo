@@ -53,6 +53,7 @@ namespace Yachiyo {
    furisodeSource=r;furisodeOriginal=r.sharedMesh;furisodeOriginalBones=r.bones.ToArray();
    var original=furisodeOriginal;var vertices=original.vertices;var originalWeights=original.boneWeights;var weights=originalWeights.ToArray();var triangles=original.triangles;
    var bones=r.bones.ToList();var bindposes=original.bindposes.ToList();furisodeMask=new bool[vertices.Length];sleeveFixedMask=new bool[vertices.Length];
+   sleeveShellMask=new bool[vertices.Length];sleeveCuffOverlap=new float[vertices.Length];
    var snapshot=new SurfaceBinding{bones=furisodeOriginalBones,vertices=vertices,weights=originalWeights,bindposes=original.bindposes};furisodeBind=snapshot;furisodeVertices=vertices;furisodeWeights=originalWeights;
    Vector3 OriginalWorld(int i){var w=originalWeights[i];var p=vertices[i];return Skin(snapshot,w.boneIndex0,w.weight0,p)+Skin(snapshot,w.boneIndex1,w.weight1,p)+Skin(snapshot,w.boneIndex2,w.weight2,p)+Skin(snapshot,w.boneIndex3,w.weight3,p);}
    foreach(string side in new[]{"Left","Right"}){
@@ -60,7 +61,7 @@ namespace Yachiyo {
     for(int t=0;t<triangles.Length;t+=3)if(Enumerable.Range(0,3).All(j=>SleeveSurfaceWeight(originalWeights[triangles[t+j]],furisodeOriginalBones,side)>.08f)){
      selected.Add(t);for(int j=0;j<3;j++){string a=SleevePositionKey(vertices[triangles[t+j]]),b=SleevePositionKey(vertices[triangles[t+(j+1)%3]]);if(!adjacent.ContainsKey(a))adjacent[a]=new HashSet<string>();if(!adjacent.ContainsKey(b))adjacent[b]=new HashSet<string>();adjacent[a].Add(b);adjacent[b].Add(a);}
     }
-    var seen=new HashSet<string>();var faces=new HashSet<int>();var bowFaces=new HashSet<int>();int walls=0;
+    var seen=new HashSet<string>();var faces=new HashSet<int>();var bowFaces=new HashSet<int>();var panels=new List<int[]>();int walls=0;
     foreach(var first in adjacent.Keys){
      if(seen.Contains(first))continue;var nodes=new HashSet<string>();var pending=new Stack<string>();pending.Push(first);
      while(pending.Count>0){var p=pending.Pop();if(!seen.Add(p))continue;nodes.Add(p);foreach(var n in adjacent[p])pending.Push(n);}
@@ -69,7 +70,7 @@ namespace Yachiyo {
      // disconnected. Leaving them on the old garment skin makes them float.
      if(component.Max(t=>Mathf.Max(vertices[triangles[t]].z,vertices[triangles[t+1]].z,vertices[triangles[t+2]].z))<1.3f){bowFaces.UnionWith(component);continue;}
      if(nodes.Count<80)continue;
-     walls++;faces.UnionWith(component);
+     walls++;faces.UnionWith(component);panels.Add(component);
     }
     if(walls!=2)throw new InvalidOperationException("Expected sleeve shell and cuff on "+side+", found "+walls);
     var ids=faces.SelectMany(t=>new[]{triangles[t],triangles[t+1],triangles[t+2]}).Distinct().ToArray();
@@ -127,6 +128,7 @@ namespace Yachiyo {
      if(best.Length>0){result.boneIndex0=best[0].Key;result.weight0=best[0].Value/total;}if(best.Length>1){result.boneIndex1=best[1].Key;result.weight1=best[1].Value/total;}if(best.Length>2){result.boneIndex2=best[2].Key;result.weight2=best[2].Value/total;}if(best.Length>3){result.boneIndex3=best[3].Key;result.weight3=best[3].Value/total;}
      weights[i]=result;furisodeMask[i]=blend>0;
     }
+    BindSleeveOverlap(vertices,original.normals,triangles,panels,weights);
     furisodeGrids.Add(grid);
    }
    furisodeRuntime=Instantiate(original);furisodeRuntime.name=original.name+" / continuous furisode skin";furisodeRuntime.boneWeights=weights;furisodeRuntime.bindposes=bindposes.ToArray();r.bones=bones.ToArray();r.sharedMesh=furisodeRuntime;

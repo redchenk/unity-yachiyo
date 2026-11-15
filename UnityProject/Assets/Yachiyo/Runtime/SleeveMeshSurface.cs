@@ -92,7 +92,7 @@ namespace Yachiyo {
     var cloth=NewGroup("Sleeve MeshCloth / "+sleeve.grid.side,out var info);var s=cloth.SerializeData;info.type="MeshCloth";info.renderers=new[]{furisodeSource.name};info.roots=Array.Empty<string>();
     s.clothType=ClothProcess.ClothType.MeshCloth;s.sourceRenderers.Add(sleeve.proxy);s.animationPoseRatio=0;
     s.reductionSetting.simpleDistance=0;s.reductionSetting.shapeDistance=0;s.gravity=5;s.damping=new CurveSerializeData(.158f);
-    s.radius=new CurveSerializeData(.01f);s.tetherConstraint.distanceCompression=.8f;s.distanceConstraint.stiffness=new CurveSerializeData(1,1,.95f);s.triangleBendingConstraint.stiffness=.35f;
+    s.radius=new CurveSerializeData(.018f,1,.45f);s.tetherConstraint.distanceCompression=.8f;s.distanceConstraint.stiffness=new CurveSerializeData(1,1,.95f);s.triangleBendingConstraint.stiffness=.35f;
     s.angleRestorationConstraint.stiffness=new CurveSerializeData(.12f,new AnimationCurve(new Keyframe(0,1,-3.4345763f,-3.4345763f),new Keyframe(.61187744f,.055889904f,-.19770783f,-.19770783f)));s.angleRestorationConstraint.velocityAttenuation=.481f;
     s.angleLimitConstraint.useAngleLimit=false;s.motionConstraint.useMaxDistance=false;s.motionConstraint.useBackstop=false;
     s.inertiaConstraint.anchor=null;s.inertiaConstraint.anchorInertia=0;s.inertiaConstraint.worldInertia=1;s.inertiaConstraint.localInertia=1;s.colliderCollisionConstraint.friction=.05f;s.colliderCollisionConstraint.colliderList.AddRange(sleeveSkirtEnvelope);
@@ -123,12 +123,14 @@ namespace Yachiyo {
     Vector4 sum=Vector4.zero;
     for(int i=0;i<tie.supports.Length;i++){var q=tie.supports[i].rotation*tie.supportOffsets[i];float weight=tie.weights[i]*(Quaternion.Dot(tie.rotation,q)<0?-1:1);sum+=new Vector4(q.x,q.y,q.z,q.w)*weight;}
     if(sum.sqrMagnitude>1e-8f){sum.Normalize();var target=new Quaternion(sum.x,sum.y,sum.z,sum.w);tie.rotation=Quaternion.RotateTowards(tie.rotation,Quaternion.Slerp(tie.rotation,target,alpha),240*dt);}
-    tie.position=DisplayPoint(tie.a)+tie.rotation*tie.offset;tie.root.SetPositionAndRotation(tie.position,tie.rotation);
+    tie.position=DisplayContactPoint(furisodeSource,tie.a,DisplayPoint(tie.a))+tie.rotation*tie.offset;tie.root.SetPositionAndRotation(tie.position,tie.rotation);
     for(int i=0;i<tie.nodes.Length;i++){
      // Keep the authored loop lengths; secondary motion changes their angles,
      // not the spacing of the knot branches. Filter only the small local sway.
      var target=Quaternion.RotateTowards(tie.restRotations[i],tie.solverNodes[i].localRotation,5);
-     tie.displayRotations[i]=Quaternion.RotateTowards(tie.displayRotations[i],Quaternion.Slerp(tie.displayRotations[i],target,swayAlpha),40*dt);
+     // The sewn loop should not twitch when a body-contact correction moves
+     // its parent. Keep the small local response slower than the sleeve root.
+     tie.displayRotations[i]=Quaternion.RotateTowards(tie.displayRotations[i],Quaternion.Slerp(tie.displayRotations[i],target,swayAlpha),10*dt);
      tie.nodes[i].SetLocalPositionAndRotation(tie.restPositions[i],tie.displayRotations[i]);
     }
    }
@@ -140,7 +142,13 @@ namespace Yachiyo {
     sleeve.proxy.BakeMesh(sleeve.bake);var points=sleeve.bake.vertices;for(int i=0;i<points.Length;i++)points[i]=sleeve.proxy.transform.TransformPoint(points[i]);
     for(int col=0;col<SleeveColumns;col++)for(int row=0;row<SleeveRows;row++){
      int a=col*SleeveRows+row,b=(col<SleeveColumns-1?col+1:col-1)*SleeveRows+row,c=col*SleeveRows+(row<SleeveRows-1?row+1:row-1);
-     var frame=SurfaceFrame(points[a],points[b],points[c]);sleeve.grid.nodes[col,row].SetPositionAndRotation(points[a],frame*Quaternion.Inverse(sleeve.frames[a])*sleeve.rotations[a]);
+     var frame=SurfaceFrame(points[a],points[b],points[c]);var simulated=frame*Quaternion.Inverse(sleeve.frames[a])*sleeve.rotations[a];
+     // A pinned position is not a free rotational hinge. Preserve the authored
+     // tube orientation at the arm, then blend into the hanging cloth tangent.
+     // Otherwise a folded first proxy row flips the dark lining outside.
+     var anchor=sleeve.grid.anchors[col];var attached=anchor.support.rotation*Quaternion.Inverse(anchor.bindSupport)*sleeve.rotations[a];
+     var rotation=Quaternion.Slerp(attached,simulated,Mathf.SmoothStep(0,1,row/4f));
+     sleeve.grid.nodes[col,row].SetPositionAndRotation(points[a],rotation);
     }
    }UpdateSleeveTieDisplay();LastSimulationMs+=(float)((System.Diagnostics.Stopwatch.GetTimestamp()-started)*1000.0/System.Diagnostics.Stopwatch.Frequency);
   }

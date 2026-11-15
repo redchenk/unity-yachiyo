@@ -14,8 +14,9 @@ Shader "Yachiyo/ClothToon" {
    float4 _FaceOrigin,_FaceForward,_FaceRight,_FaceUp;
    float _ClothCollision,_ClothPadding,_ClothColliderCount,_SleeveContactMargin,_AuthoredSleeves;
    float4 _ClothCapsuleA[12],_ClothCapsuleB[12];
+   float _BodyContactEnabled,_BodyContactCount;float4 _BodyContactA[8],_BodyContactB[8];
    float4 _ClothWaist,_ClothUp,_ClothRight,_ClothForward,_SleeveLeftDirection,_SleeveRightDirection;
-   struct appdata { float4 vertex:POSITION; float3 normal:NORMAL; float2 uv:TEXCOORD0; float2 liningUV:TEXCOORD1; float2 contact:TEXCOORD2; };
+   struct appdata { float4 vertex:POSITION; float3 normal:NORMAL; float2 uv:TEXCOORD0; float2 liningUV:TEXCOORD1; float2 contact:TEXCOORD2; float2 bodyContact:TEXCOORD4; };
    struct v2f { float4 pos:SV_POSITION; float2 uv:TEXCOORD0; float3 normal:TEXCOORD1; float3 worldPos:TEXCOORD2; float2 liningUV:TEXCOORD3; };
    v2f vert(appdata v) {
     v2f o;float3 world=mul(unity_ObjectToWorld,v.vertex).xyz;float sleeveShift=0;
@@ -67,6 +68,18 @@ Shader "Yachiyo/ClothToon" {
      }
     }
     if(sleeve && !originalSleeve && _ClothCollision>.5 && sleeveShift>0)world+=direction*sleeveShift*.8;
+   if(_BodyContactEnabled>.5 && v.bodyContact.x>0){
+    // Final skinned fabric can extend inward from a collision-free proxy.
+    // Resolve only that contact, preserving independently tagged lining layers.
+    float3 beforeContact=world;
+    for(int contactPass=0;contactPass<2;contactPass++)for(int k=0;k<8;k++)if(k<_BodyContactCount){
+     float3 a=_BodyContactA[k].xyz,b=_BodyContactB[k].xyz,axis=b-a;
+     float t=saturate(dot(world-a,axis)/max(dot(axis,axis),.000001));float3 center=a+axis*t,away=world-center;
+     float d=length(away),radius=lerp(_BodyContactA[k].w,_BodyContactB[k].w,t)+v.bodyContact.y;
+     if(d<radius+.004 && d>.00001){float outside=radius+.001*log(1+exp((d-radius)/.001));world=center+away*(outside/d);}
+    }
+    world=lerp(beforeContact,world,v.bodyContact.x);
+   }
     o.pos=mul(UNITY_MATRIX_VP,float4(world,1));o.uv=TRANSFORM_TEX(v.uv,_MainTex);o.normal=UnityObjectToWorldNormal(v.normal);o.worldPos=world;o.liningUV=TRANSFORM_TEX(v.liningUV,_MainTex);return o;
    }
    fixed4 frag(v2f i,fixed facing:VFACE):SV_Target {

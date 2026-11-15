@@ -59,6 +59,7 @@ namespace Yachiyo {
    foreach(var hair in GetComponents<HairPhysics>())hair.enabled=false;
    ornamentEars=originalBones.Where(t=>t.name=="Acs_Obi_A001"||t.name=="Acs_Obi_B001").ToArray();earDisplay=new Quaternion[ornamentEars.Length];
    CreateColliders();
+   PrepareSkirtPoseSupport();
    var clothes=GetComponentsInChildren<SkinnedMeshRenderer>().Where(r=>r.name=="cloth1"||r.name=="cloth2").OrderBy(r=>r.name).ToArray();
    if(clothes.Length!=2){Fail("Expected the original cloth1 and cloth2 renderers");return;}
    if(Array.IndexOf(Environment.GetCommandLineArgs(),"--mesh-furisode-baseline")<0)PrepareFurisode(clothes.Single(r=>r.name=="cloth1"));
@@ -107,15 +108,15 @@ namespace Yachiyo {
    var cloth=NewGroup(label,out var info);var s=cloth.SerializeData;
    info.type="MeshCloth";info.renderers=renderers.Select(r=>r.name).ToArray();info.roots=Array.Empty<string>();
    s.clothType=ClothProcess.ClothType.MeshCloth;s.sourceRenderers.AddRange(renderers);
-   s.reductionSetting.simpleDistance=.002f;s.reductionSetting.shapeDistance=.024f;
-   s.radius=new CurveSerializeData(.004f);s.gravity=7;
+   s.reductionSetting.simpleDistance=.002f;s.reductionSetting.shapeDistance=.014f;
+   s.radius=new CurveSerializeData(.006f);s.gravity=7;
    // Long furisode panels must fold toward their attachment, rather than be
    // held at the package's default minimum tether length (60% of rest).
    s.tetherConstraint.distanceCompression=.9f;
    s.triangleBendingConstraint.stiffness=.12f;
    s.angleRestorationConstraint.stiffness=new CurveSerializeData(.045f,1,.15f);s.angleRestorationConstraint.velocityAttenuation=.55f;
    s.angleLimitConstraint.useAngleLimit=true;s.angleLimitConstraint.limitAngle=new CurveSerializeData(95);
-   s.motionConstraint.useMaxDistance=true;s.motionConstraint.maxDistance=new CurveSerializeData(.65f,.05f,1);
+   s.motionConstraint.useMaxDistance=true;s.motionConstraint.maxDistance=new CurveSerializeData(.22f,.05f,1);
    // The source garment has intentional lining folds and mixed normal directions;
    // body + cloth contacts handle them without a global inward-facing Backstop.
    s.motionConstraint.useBackstop=false;
@@ -123,6 +124,7 @@ namespace Yachiyo {
    s.selfCollisionConstraint.surfaceThickness=new CurveSerializeData(.003f);s.selfCollisionConstraint.clothMass=.65f;
    var data=cloth.GetSerializeData2();
    foreach(var r in renderers){
+    PrepareBodyContactSurface(r);
     var mesh=r.sharedMesh;var weights=mesh.boneWeights;var baked=new Mesh();r.BakeMesh(baked);
     var vertices=baked.vertices;var attributes=new VertexAttribute[vertices.Length];
     for(int i=0;i<attributes.Length;i++){
@@ -193,11 +195,13 @@ namespace Yachiyo {
   }
   void CreateColliders(){
    foreach(var c in owner.bodyCapsules){
+    if(c.name.Contains("Arm")||c.name.Contains("Leg"))continue;
     var t=new GameObject("Magica body / "+c.name).transform;t.SetParent(c.transform,false);t.localPosition=c.center;
     var mc=t.gameObject.AddComponent<MagicaCapsuleCollider>();mc.direction=(MagicaCapsuleCollider.Direction)c.direction;
     float pad=c.name.Contains("UpperLeg")?.012f:c.name.Contains("Arm")?.008f:.012f;
     mc.SetSize(c.radius+pad,c.radius+pad,c.height+pad*2);colliders.Add(mc);
    }
+   CreateLimbContacts();
    AddSphere("Head",animator.GetBoneTransform(HumanBodyBones.Head),new Vector3(0,.065f,.005f),.095f);
    AddSegment("Neck",HumanBodyBones.Neck,HumanBodyBones.Head,.042f);
    AddSegment("Shoulders",HumanBodyBones.LeftUpperArm,HumanBodyBones.RightUpperArm,.043f);
@@ -223,7 +227,7 @@ namespace Yachiyo {
    var t=new GameObject("Magica body / "+label).transform;t.SetParent(label=="Shoulders"?animator.GetBoneTransform(HumanBodyBones.Chest):a,false);t.position=(a.position+b.position)*.5f;t.rotation=Quaternion.FromToRotation(Vector3.up,b.position-a.position);
    var capsule=t.gameObject.AddComponent<MagicaCapsuleCollider>();capsule.direction=MagicaCapsuleCollider.Direction.Y;capsule.SetSize(radius,radius,Vector3.Distance(a.position,b.position)+radius*2);colliders.Add(capsule);
   }
-  void BeforeSimulation(){SimulationFrames++;simulationStart=System.Diagnostics.Stopwatch.GetTimestamp();UpdateFurisodeAnchors();UpdateSleeveTieRoots();}
+  void BeforeSimulation(){SimulationFrames++;simulationStart=System.Diagnostics.Stopwatch.GetTimestamp();UpdateSkirtPoseSupport();UpdateLimbContacts();UpdateFurisodeAnchors();UpdateSleeveTieRoots();}
   void AfterSimulation(){
    // Small stiff decorative ears expose fixed-step quantization more than cloth.
    // Interpolate only their displayed rotation, retaining the solver's inertia.
@@ -237,13 +241,14 @@ namespace Yachiyo {
    LastSimulationMs=(float)((System.Diagnostics.Stopwatch.GetTimestamp()-simulationStart)*1000.0/System.Diagnostics.Stopwatch.Frequency);
   }
   void Fail(string message){Failed=true;Ready=false;Failure=message;Debug.LogError("FULL_CLOTH_FAILED "+message);}
-  void OnDestroy(){DisposeMeshSleeves();MagicaManager.OnPreSimulation-=BeforeSimulation;MagicaManager.OnPostSimulation-=AfterSimulation;if(furisodeRuntime)Destroy(furisodeRuntime);}
+  void OnDestroy(){DisposeBodyContacts();DisposeMeshSleeves();MagicaManager.OnPreSimulation-=BeforeSimulation;MagicaManager.OnPostSimulation-=AfterSimulation;if(furisodeRuntime)Destroy(furisodeRuntime);}
 #endif
   public void SetSimulation(bool value){
    Active=value;
 #if YACHIYO_MAGICA
    earDisplayReady=false;foreach(var c in cloths){c.enabled=value;if(value)c.ResetCloth();}
    if(!value)RestoreSleeveTies();
+   UpdateVisibleBodyContacts(value);
 #endif
   }
   public void ResetSimulation(){
