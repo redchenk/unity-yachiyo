@@ -128,7 +128,7 @@ namespace Yachiyo {
     for(int i=0;i<attributes.Length;i++){
      var w=weights[i];var world=r.transform.TransformPoint(vertices[i]);
      float mobile=Mobility(r.bones[w.boneIndex0],world)*w.weight0+Mobility(r.bones[w.boneIndex1],world)*w.weight1+Mobility(r.bones[w.boneIndex2],world)*w.weight2+Mobility(r.bones[w.boneIndex3],world)*w.weight3;
-     bool move=mobile>.25f&&!(r==furisodeSource&&furisodeMask[i]);attributes[i]=move?VertexAttribute.Move:VertexAttribute.Invalid;
+     bool move=mobile>.25f&&!IsFurisodeDriven(r,i)&&!IsSleeveFixed(r,i);attributes[i]=move?VertexAttribute.Move:VertexAttribute.Invalid;
      if(move)info.movable++;
     }
     // Keep non-cloth areas (shoulder roll, neck, plush) on exact original
@@ -138,9 +138,9 @@ namespace Yachiyo {
      var before=(VertexAttribute[])attributes.Clone();
      for(int k=0;k<triangles.Length;k+=3){int a=triangles[k],b=triangles[k+1],c=triangles[k+2];
       if(before[a]==VertexAttribute.Invalid&&before[b]==VertexAttribute.Invalid&&before[c]==VertexAttribute.Invalid)continue;
-      if(attributes[a]==VertexAttribute.Invalid)attributes[a]=VertexAttribute.Fixed;
-      if(attributes[b]==VertexAttribute.Invalid)attributes[b]=VertexAttribute.Fixed;
-      if(attributes[c]==VertexAttribute.Invalid)attributes[c]=VertexAttribute.Fixed;
+      if(attributes[a]==VertexAttribute.Invalid&&!IsSleeveFixed(r,a))attributes[a]=VertexAttribute.Fixed;
+      if(attributes[b]==VertexAttribute.Invalid&&!IsSleeveFixed(r,b))attributes[b]=VertexAttribute.Fixed;
+      if(attributes[c]==VertexAttribute.Invalid&&!IsSleeveFixed(r,c))attributes[c]=VertexAttribute.Fixed;
      }
     }
     info.fixedVertices+=attributes.Count(a=>a==VertexAttribute.Fixed);

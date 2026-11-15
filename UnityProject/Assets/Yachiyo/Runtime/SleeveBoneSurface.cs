@@ -34,19 +34,25 @@ namespace Yachiyo {
   const int SleeveColumns=8,SleeveRows=11;
   SkinnedMeshRenderer furisodeSource;Mesh furisodeOriginal,furisodeRuntime;Transform[] furisodeOriginalBones;
   SurfaceBinding furisodeBind;Vector3[] furisodeVertices;BoneWeight[] furisodeWeights;
-  bool[] furisodeMask;readonly List<SleeveGrid> furisodeGrids=new List<SleeveGrid>();
+  bool[] furisodeMask,sleeveFixedMask;readonly List<SleeveGrid> furisodeGrids=new List<SleeveGrid>();
+  readonly List<(int bow,int surface)> sleeveBowBindings=new List<(int,int)>();
   sealed class SleeveAnchor {public Transform root,support;public int[] sourceIds;public Quaternion bindSupport,bindRotation;}
   sealed class SleeveGrid {public string side;public Transform[,] nodes;public Quaternion[,] rest;public SleeveAnchor[] anchors;}
   static string SleevePositionKey(Vector3 p)=>Mathf.RoundToInt(p.x*100000)+"/"+Mathf.RoundToInt(p.y*100000)+"/"+Mathf.RoundToInt(p.z*100000);
   static float SleeveSurfaceWeight(BoneWeight w,Transform[] bones,string side){
    float sum=0;foreach(var p in new[]{(w.boneIndex0,w.weight0),(w.boneIndex1,w.weight1),(w.boneIndex2,w.weight2),(w.boneIndex3,w.weight3)}){
-    string n=bones[p.Item1].name;if(n.EndsWith(side)&&(n.StartsWith("Acs_FrontSleeve_")||n.StartsWith("Acs_BackSleeve_")||n.StartsWith("Acs_ArmSleeve_")||n.StartsWith("Acs_CenterSleeve_")))sum+=p.Item2;
+    string n=bones[p.Item1].name;if(n.EndsWith(side)&&(n.StartsWith("Acs_FrontSleeve_")||n.StartsWith("Acs_BackSleeve_")||n.StartsWith("Acs_ArmSleeve_")||n.StartsWith("Acs_CenterSleeve_")||n.StartsWith("Acs_UnderSleeveRibbon_")))sum+=p.Item2;
+   }return sum;
+  }
+  static float SleeveTorsoWeight(BoneWeight w,Transform[] bones){
+   float sum=0;foreach(var p in new[]{(w.boneIndex0,w.weight0),(w.boneIndex1,w.weight1),(w.boneIndex2,w.weight2),(w.boneIndex3,w.weight3)}){
+    string n=bones[p.Item1].name;if(n.StartsWith("Spine")||n.StartsWith("Hips")||n.StartsWith("Chest")||n.StartsWith("Neck"))sum+=p.Item2;
    }return sum;
   }
   void PrepareFurisode(SkinnedMeshRenderer r){
    furisodeSource=r;furisodeOriginal=r.sharedMesh;furisodeOriginalBones=r.bones.ToArray();
    var original=furisodeOriginal;var vertices=original.vertices;var originalWeights=original.boneWeights;var weights=originalWeights.ToArray();var triangles=original.triangles;
-   var bones=r.bones.ToList();var bindposes=original.bindposes.ToList();furisodeMask=new bool[vertices.Length];
+   var bones=r.bones.ToList();var bindposes=original.bindposes.ToList();furisodeMask=new bool[vertices.Length];sleeveFixedMask=new bool[vertices.Length];
    var snapshot=new SurfaceBinding{bones=furisodeOriginalBones,vertices=vertices,weights=originalWeights,bindposes=original.bindposes};furisodeBind=snapshot;furisodeVertices=vertices;furisodeWeights=originalWeights;
    Vector3 OriginalWorld(int i){var w=originalWeights[i];var p=vertices[i];return Skin(snapshot,w.boneIndex0,w.weight0,p)+Skin(snapshot,w.boneIndex1,w.weight1,p)+Skin(snapshot,w.boneIndex2,w.weight2,p)+Skin(snapshot,w.boneIndex3,w.weight3,p);}
    foreach(string side in new[]{"Left","Right"}){
@@ -54,20 +60,35 @@ namespace Yachiyo {
     for(int t=0;t<triangles.Length;t+=3)if(Enumerable.Range(0,3).All(j=>SleeveSurfaceWeight(originalWeights[triangles[t+j]],furisodeOriginalBones,side)>.08f)){
      selected.Add(t);for(int j=0;j<3;j++){string a=SleevePositionKey(vertices[triangles[t+j]]),b=SleevePositionKey(vertices[triangles[t+(j+1)%3]]);if(!adjacent.ContainsKey(a))adjacent[a]=new HashSet<string>();if(!adjacent.ContainsKey(b))adjacent[b]=new HashSet<string>();adjacent[a].Add(b);adjacent[b].Add(a);}
     }
-    var seen=new HashSet<string>();var faces=new HashSet<int>();int walls=0;
+    var seen=new HashSet<string>();var faces=new HashSet<int>();var bowFaces=new HashSet<int>();int walls=0;
     foreach(var first in adjacent.Keys){
      if(seen.Contains(first))continue;var nodes=new HashSet<string>();var pending=new Stack<string>();pending.Push(first);
      while(pending.Count>0){var p=pending.Pop();if(!seen.Add(p))continue;nodes.Add(p);foreach(var n in adjacent[p])pending.Push(n);}
      var component=selected.Where(t=>nodes.Contains(SleevePositionKey(vertices[triangles[t]]))).ToArray();
-     // Main sleeve walls and the ruffled cuff reach the arm. Detached bow
-     // ornaments below the cuff retain their existing garment solver.
-     if(nodes.Count<80||component.Max(t=>Mathf.Max(vertices[triangles[t]].z,vertices[triangles[t+1]].z,vertices[triangles[t+2]].z))<1.3f)continue;
+     // The bow islands are sewn to this sleeve, even though their mesh is
+     // disconnected. Leaving them on the old garment skin makes them float.
+     if(component.Max(t=>Mathf.Max(vertices[triangles[t]].z,vertices[triangles[t+1]].z,vertices[triangles[t+2]].z))<1.3f){bowFaces.UnionWith(component);continue;}
+     if(nodes.Count<80)continue;
      walls++;faces.UnionWith(component);
     }
     if(walls!=2)throw new InvalidOperationException("Expected sleeve shell and cuff on "+side+", found "+walls);
     var ids=faces.SelectMany(t=>new[]{triangles[t],triangles[t+1],triangles[t+2]}).Distinct().ToArray();
-    var kept=Enumerable.Range(0,triangles.Length/3).Where(t=>!faces.Contains(t*3)).SelectMany(t=>new[]{triangles[t*3],triangles[t*3+1],triangles[t*3+2]}).ToArray();
-    var seamKeys=new HashSet<string>(kept.Select(i=>SleevePositionKey(vertices[i])));var seam=ids.Where(i=>seamKeys.Contains(SleevePositionKey(vertices[i]))).ToArray();
+    var bowIds=new HashSet<int>(bowFaces.SelectMany(t=>new[]{triangles[t],triangles[t+1],triangles[t+2]}));
+    // Bind diagnostics to the authored sewing point, not to a moving nearest
+    // point search that could hide a detached ornament during animation.
+    float nearest=float.PositiveInfinity;int bowAnchor=-1,surfaceAnchor=-1;
+    foreach(int i in bowIds){var bw=originalWeights[i];bool root=false;
+     foreach(var pair in new[]{(bw.boneIndex0,bw.weight0),(bw.boneIndex1,bw.weight1),(bw.boneIndex2,bw.weight2),(bw.boneIndex3,bw.weight3)})root|=pair.Item2>.01f&&furisodeOriginalBones[pair.Item1].name.StartsWith("Acs_UnderSleeveRibbon_Root_");
+     if(!root)continue;
+     foreach(int j in ids){float d=(vertices[i]-vertices[j]).sqrMagnitude;if(d<nearest){nearest=d;bowAnchor=i;surfaceAnchor=j;}}
+    }
+    if(bowAnchor<0)throw new InvalidOperationException("Sleeve bow attachment missing on "+side);
+    sleeveBowBindings.Add((bowAnchor,surfaceAnchor));
+    var kept=Enumerable.Range(0,triangles.Length/3).Where(t=>!faces.Contains(t*3)&&!bowFaces.Contains(t*3)).SelectMany(t=>new[]{triangles[t*3],triangles[t*3+1],triangles[t*3+2]}).ToArray();
+    var seamKeys=new HashSet<string>(kept.Select(i=>SleevePositionKey(vertices[i])));
+    // Torso weights identify the bodice attachment. Shoulder weights are arm
+    // support, and also occur far down the hem: never turn them into body pins.
+    var seam=ids.Where(i=>seamKeys.Contains(SleevePositionKey(vertices[i]))||SleeveTorsoWeight(originalWeights[i],furisodeOriginalBones)>.005f).ToArray();
     if(seam.Length<8)throw new InvalidOperationException("Furisode seam missing");
     float minX=.19f,maxX=ids.Max(i=>Mathf.Abs(vertices[i].x));
     var upperEdge=ids.Where(i=>vertices[i].z>1.285f&&Mathf.Abs(vertices[i].x)>.18f).ToArray();
@@ -87,14 +108,18 @@ namespace Yachiyo {
      }
      grid.anchors[col]=new SleeveAnchor{root=grid.nodes[col,0],support=support,sourceIds=near,bindSupport=support.rotation,bindRotation=grid.nodes[col,0].rotation};
     }
-    foreach(int i in ids){
+    foreach(int i in ids.Concat(bowIds)){
      float v=Mathf.Clamp01((top-vertices[i].z)/height);float u=Mathf.Clamp01((Mathf.Abs(vertices[i].x)-minX)/(Mathf.Lerp(rootMax,maxX,v)-minX));
      float cx=u*(SleeveColumns-1),cy=v*(SleeveRows-1);int x=Mathf.Min(SleeveColumns-2,(int)cx),y=Mathf.Min(SleeveRows-2,(int)cy);float fx=cx-x,fy=cy-y;
-     float distance=seam.Min(j=>new Vector2(vertices[i].x-vertices[j].x,vertices[i].z-vertices[j].z).magnitude);
+     float distance=seam.Min(j=>Vector3.Distance(vertices[i],vertices[j]));
      // Preserve the original shoulder roll and its seam exactly. From the
      // underarm onward, cuff, forearm and hanging panel share one surface.
-     float shoulder=Mathf.Lerp(1,Mathf.SmoothStep(0,1,(Mathf.Abs(vertices[i].x)-.24f)/.10f),Mathf.SmoothStep(0,1,(vertices[i].z-1.15f)/.08f));
-     float blend=Mathf.SmoothStep(0,1,distance/.035f)*shoulder;
+     float shoulder=Mathf.Lerp(1,Mathf.SmoothStep(0,1,(Mathf.Abs(vertices[i].x)-.24f)/.10f),Mathf.SmoothStep(0,1,(vertices[i].z-1.08f)/.15f));
+     // A connected component contains a few bodice vertices with small sleeve
+     // weights. Keep those on their authored torso skin; component membership
+     // alone is not permission to pull the chest/back into the sleeve grid.
+     float blend=bowIds.Contains(i)?1:Mathf.SmoothStep(0,1,distance/.20f)*shoulder;
+     sleeveFixedMask[i]=blend==0;
      var values=new Dictionary<int,float>();void Add(int bone,float w){if(w>0)values[bone]=values.TryGetValue(bone,out var old)?old+w:w;}
      var w=originalWeights[i];Add(w.boneIndex0,w.weight0*(1-blend));Add(w.boneIndex1,w.weight1*(1-blend));Add(w.boneIndex2,w.weight2*(1-blend));Add(w.boneIndex3,w.weight3*(1-blend));
      Add(baseIndex+x*SleeveRows+y,(1-fx)*(1-fy)*blend);Add(baseIndex+(x+1)*SleeveRows+y,fx*(1-fy)*blend);Add(baseIndex+x*SleeveRows+y+1,(1-fx)*fy*blend);Add(baseIndex+(x+1)*SleeveRows+y+1,fx*fy*blend);
@@ -108,6 +133,7 @@ namespace Yachiyo {
    Debug.Log("FURISODE_GRID vertices="+furisodeMask.Count(x=>x)+" bones="+(bones.Count-furisodeOriginalBones.Length));
   }
   bool IsFurisodeDriven(SkinnedMeshRenderer renderer,int vertex)=>renderer==furisodeSource&&furisodeMask[vertex];
+  bool IsSleeveFixed(SkinnedMeshRenderer renderer,int vertex)=>renderer==furisodeSource&&sleeveFixedMask[vertex];
   void BuildFurisodeGroups(MagicaCloth garment){
    foreach(var grid in furisodeGrids){
     var cloth=NewGroup("Furisode surface / "+grid.side,out var info);var s=cloth.SerializeData;info.type="BoneCloth";info.renderers=new[]{furisodeSource.name};info.roots=grid.anchors.Select(a=>a.root.name).ToArray();

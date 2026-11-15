@@ -16,6 +16,7 @@ namespace Yachiyo {
    public List<FullCharacterCloth.GroupInfo> groups;public List<State> states=new List<State>();
    public FullCharacterCloth.HangingSleeveSample[] hangingSleeves;
    public FullCharacterCloth.SleeveRegionSample[] sleeveRegions;
+   public int bowAttachments;public float maxAddedBowGap,maxSleeveBoundaryStretch,maxSleeveFixedError;
   }
   [Serializable]class State{public string name;public int frames;}
   string path;AvatarMotion avatar;FullCharacterCloth cloth;GarmentPhysics garment;Report report=new Report();
@@ -32,6 +33,7 @@ namespace Yachiyo {
    if(!cloth.Ready){Finish();yield break;}
    report.noLegacySolvers=garment.Native==null&&garment.Sleeves==null&&!avatar.GetComponents<HairPhysics>().Any(h=>h.enabled)&&avatar.GetComponentsInChildren<Cloth>().Length==0;
    avatar.followPointer=false;yield return new WaitForSeconds(3);
+   if(Array.IndexOf(Environment.GetCommandLineArgs(),"--cloth-sleeve-attachment-stress")>=0){yield return SleeveAttachmentResponse();yield break;}
    if(Array.IndexOf(Environment.GetCommandLineArgs(),"--cloth-sleeve-stress")>=0||Array.IndexOf(Environment.GetCommandLineArgs(),"--cloth-sleeve-junction-stress")>=0){yield return SleeveResponse();yield break;}
    var attachments=avatar.GetComponentsInChildren<Transform>().Where(t=>t.name=="Head"||t.name=="Neck1"||t.name=="Neck2"||t.name.Contains("约束基准")).ToArray();
    var attachmentPositions=attachments.Select(t=>t.localPosition).ToArray();
@@ -48,7 +50,7 @@ namespace Yachiyo {
      frameMs.Add(Time.unscaledDeltaTime*1000);simulationMs.Add(cloth.LastSimulationMs);var bend=cloth.MeasureFurisodeBend();report.furisodeMaxLocalBend=Mathf.Max(report.furisodeMaxLocalBend,bend.y);report.furisodeMeanLocalBend+=bend.x;
      for(int i=0;i<attachments.Length;i++)report.maxAttachmentError=Mathf.Max(report.maxAttachmentError,Vector3.Distance(attachmentPositions[i],attachments[i].localPosition));
      #if YACHIYO_MAGICA
-     if(state.frames%60==0)report.maxPinnedSurfaceError=Mathf.Max(report.maxPinnedSurfaceError,cloth.MeasurePinnedError());
+     if(state.frames%60==0){report.maxPinnedSurfaceError=Mathf.Max(report.maxPinnedSurfaceError,cloth.MeasurePinnedError());SampleSleeveAttachments();}
 #endif
      if(state.frames%15==0)foreach(var r in renderers){r.BakeMesh(bake);foreach(var v in bake.vertices)report.finite&=float.IsFinite(v.x)&&float.IsFinite(v.y)&&float.IsFinite(v.z)&&v.sqrMagnitude<100;}
      if(Time.realtimeSinceStartup-start>1+capture*2&&capture<3){Capture(name+"-"+capture,capture==0?0:capture==1?90:180);capture++;}
@@ -85,10 +87,33 @@ namespace Yachiyo {
    foreach(var c in cloth.GetComponentsInChildren<MagicaCloth>()){var t=MagicaManager.Team.GetTeamDataRef(c.Process.TeamId);Debug.Log("CLOTH_RUNTIME "+c.name+" enabled="+c.enabled+" process="+t.IsProcess+" enable="+t.IsEnable+" suspend="+t.flag.IsSet(TeamManager.Flag_SyncSuspend)+" steps="+t.updateCount+" blend="+t.blendWeight+" time="+t.time+" scale="+t.nowTimeScale);}
 #endif
    report.passed=(cloth.FurisodeControlPoints==0||report.furisodeMaxLocalBend>15)&&report.ready&&report.finite&&report.noLegacySolvers&&report.originalMeshes&&report.stableAttachments&&report.toggleOff&&report.toggleOn&&report.ornamentSettledSpeed<4&&report.groups.Count==(cloth.FurisodeControlPoints>0?8:6)&&report.groups.All(g=>g.built&&g.movable>0)&&report.hangingSleeves.All(s=>s.vertices>400&&s.movable==s.vertices&&s.meanSimulationOffset>.005f&&s.meanSimulationOffset<.8f&&s.maxSimulationOffset<1.3f);
-   if(cloth.FurisodeControlPoints>0)report.passed&=report.sleeveRegions.Length==6&&report.sleeveRegions.All(s=>s.vertices>=10&&s.driven==s.vertices&&s.meanSimulationOffset>.001f&&s.meanSimulationOffset<.4f&&s.maxSimulationOffset<.8f);
+   if(cloth.FurisodeControlPoints>0)report.passed&=report.sleeveRegions.Length==6&&report.sleeveRegions.All(s=>s.vertices>=10&&s.driven>=s.vertices*.8f&&s.driven+s.protectedVertices==s.vertices&&s.meanSimulationOffset>.001f&&s.meanSimulationOffset<.4f&&s.maxSimulationOffset<.8f);
+   if(cloth.FurisodeControlPoints>0)report.passed&=SleeveAttachmentsPass();
    Finish();
   }
   static float Percentile(List<float> values){var sorted=values.OrderBy(v=>v).ToArray();return sorted[Mathf.Min(sorted.Length-1,(int)(sorted.Length*.95f))];}
+  void SampleSleeveAttachments(){var s=cloth.MeasureSleeveAttachments();report.bowAttachments=s.bows;report.maxAddedBowGap=Mathf.Max(report.maxAddedBowGap,s.maxAddedBowGap);report.maxSleeveBoundaryStretch=Mathf.Max(report.maxSleeveBoundaryStretch,s.maxBoundaryStretch);report.maxSleeveFixedError=Mathf.Max(report.maxSleeveFixedError,s.maxFixedError);}
+  bool SleeveAttachmentsPass()=>report.bowAttachments==2&&report.maxAddedBowGap<.015f&&report.maxSleeveBoundaryStretch<.035f&&report.maxSleeveFixedError<.002f;
+  IEnumerator SleeveAttachmentResponse(){
+   avatar.enabled=false;var animator=avatar.GetComponent<Animator>();var rootRest=avatar.transform.rotation;
+   var arms=new[]{animator.GetBoneTransform(HumanBodyBones.RightUpperArm),animator.GetBoneTransform(HumanBodyBones.LeftUpperArm)};
+   var elbows=new[]{animator.GetBoneTransform(HumanBodyBones.RightLowerArm),animator.GetBoneTransform(HumanBodyBones.LeftLowerArm)};
+   var hands=new[]{animator.GetBoneTransform(HumanBodyBones.RightHand),animator.GetBoneTransform(HumanBodyBones.LeftHand)};
+   var armRest=arms.Select(t=>t.rotation).ToArray();var elbowRest=elbows.Select(t=>t.localRotation).ToArray();
+   float Envelope(float t)=>t<0||t>=6?0:t<2?Mathf.SmoothStep(0,1,t/2):t<4?1:Mathf.SmoothStep(1,0,(t-4)/2);
+   float start=Time.realtimeSinceStartup;int capture=0;
+   while(Time.realtimeSinceStartup-start<22){
+    float t=Time.realtimeSinceStartup-start;float right=Envelope(t-2),left=Envelope(t-8),both=Envelope(t-14);
+    avatar.transform.rotation=Quaternion.AngleAxis((right-left+both)*30,Vector3.up)*rootRest;
+    for(int side=0;side<2;side++){
+     float weight=Mathf.Max(side==0?right:left,both);arms[side].rotation=Quaternion.AngleAxis((side==0?1:-1)*weight*95,avatar.transform.forward)*(avatar.transform.rotation*Quaternion.Inverse(rootRest))*armRest[side];
+     elbows[side].localRotation=elbowRest[side];var axis=Vector3.Cross(hands[side].position-elbows[side].position,avatar.transform.forward).normalized;elbows[side].rotation=Quaternion.AngleAxis(weight*70,axis)*elbows[side].rotation;
+    }
+    yield return new WaitForEndOfFrame();report.frames++;
+    if(t>capture*.5f){SampleSleeveAttachments();Capture("attachment-"+capture.ToString("00"),capture%3==2?160:20);capture++;}
+   }
+   report.passed=SleeveAttachmentsPass();Finish();
+  }
   IEnumerator SleeveResponse(){
    avatar.enabled=false;
    var animator=avatar.GetComponent<Animator>();var arm=animator.GetBoneTransform(HumanBodyBones.RightUpperArm);var startRotation=arm.rotation;

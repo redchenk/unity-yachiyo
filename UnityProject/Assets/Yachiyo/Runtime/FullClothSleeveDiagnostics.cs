@@ -12,7 +12,31 @@ namespace Yachiyo {
    public string side;public int vertices,movable;public float meanSimulationOffset,maxSimulationOffset;
   }
   [Serializable]public sealed class SleeveRegionSample {
-   public string side,region;public int vertices,driven;public float meanSimulationOffset,maxSimulationOffset;
+   public string side,region;public int vertices,driven,protectedVertices;public float meanSimulationOffset,maxSimulationOffset;
+  }
+  [Serializable]public sealed class SleeveAttachmentSample {
+   public int bows,fixedVertices;public float maxAddedBowGap,maxBoundaryStretch,maxFixedError;
+  }
+  public SleeveAttachmentSample MeasureSleeveAttachments(){
+   var sample=new SleeveAttachmentSample();
+#if YACHIYO_MAGICA
+   if(!furisodeSource)return sample;
+   var b=bindings.Single(x=>x.renderer==furisodeSource);var mesh=new Mesh();b.renderer.BakeMesh(mesh);
+   var actual=mesh.vertices;var expected=new Vector3[actual.Length];
+   for(int i=0;i<actual.Length;i++){
+    actual[i]=b.renderer.transform.TransformPoint(actual[i]);var w=b.weights[i];var p=b.vertices[i];
+    expected[i]=Skin(b,w.boneIndex0,w.weight0,p)+Skin(b,w.boneIndex1,w.weight1,p)+Skin(b,w.boneIndex2,w.weight2,p)+Skin(b,w.boneIndex3,w.weight3,p);
+    if(sleeveFixedMask[i]){sample.fixedVertices++;sample.maxFixedError=Mathf.Max(sample.maxFixedError,Vector3.Distance(expected[i],actual[i]));}
+   }
+   foreach(var pair in sleeveBowBindings){sample.bows++;float rest=Vector3.Distance(b.initial[pair.bow],b.initial[pair.surface]);sample.maxAddedBowGap=Mathf.Max(sample.maxAddedBowGap,Vector3.Distance(actual[pair.bow],actual[pair.surface])-rest);}
+   var tris=b.source.triangles;
+   for(int t=0;t<tris.Length;t+=3)for(int j=0;j<3;j++){
+    int a=tris[t+j],c=tris[t+(j+1)%3];if(furisodeMask[a]==furisodeMask[c])continue;
+    float reference=Mathf.Max(Vector3.Distance(b.initial[a],b.initial[c]),Vector3.Distance(expected[a],expected[c]));
+    sample.maxBoundaryStretch=Mathf.Max(sample.maxBoundaryStretch,Vector3.Distance(actual[a],actual[c])-reference);
+   }Destroy(mesh);
+#endif
+   return sample;
   }
   // Measure the previously rigid zones separately. Movement of the hem alone
   // is insufficient evidence that the forearm and cuff participate.
@@ -32,7 +56,7 @@ namespace Yachiyo {
       if(n.EndsWith(side)&&(region=="forearm"?(n.StartsWith("Acs_FrontSleeve_")||n.StartsWith("Acs_BackSleeve_")):region=="cuff"?n.StartsWith("Acs_ArmSleeve_"):n.StartsWith("Acs_CenterSleeve_")))amount+=pair.Item2;
      }
      if(amount<.7f)continue;
-     sample.vertices++;if(IsFurisodeDriven(b.renderer,i))sample.driven++;
+     sample.vertices++;if(IsFurisodeDriven(b.renderer,i))sample.driven++;else if(IsSleeveFixed(b.renderer,i))sample.protectedVertices++;
      var expected=Skin(b,w.boneIndex0,w.weight0,p)+Skin(b,w.boneIndex1,w.weight1,p)+Skin(b,w.boneIndex2,w.weight2,p)+Skin(b,w.boneIndex3,w.weight3,p);
      float offset=Vector3.Distance(expected,b.renderer.transform.TransformPoint(actual[i]));sample.meanSimulationOffset+=offset;sample.maxSimulationOffset=Mathf.Max(sample.maxSimulationOffset,offset);
     }
