@@ -22,6 +22,7 @@ namespace Yachiyo {
   [NonSerialized]public bool inspectRestSleeves,inspectNoContacts,inspectNoTwist;
   public int ParticleCount {get{int n=0;foreach(var c in chains)n+=c.bones.Length;return n;}}
   public int MovableCount=>ParticleCount-chains.Length;
+  public FullCharacterCloth FullCloth {get;private set;}
   public NativeClothRig Native {get;private set;}
   public AuthoredSleevePhysics Sleeves {get;private set;}
   public bool UsesAuthoredSleeves=>Sleeves!=null&&Sleeves.Available;
@@ -42,6 +43,7 @@ namespace Yachiyo {
   void Awake()=>Initialize();
   void Initialize(){
    if(initialized)return;
+   if(FullCharacterCloth.TryCreate(this,out var full)){FullCloth=full;initialized=true;return;}
    foreach(var c in chains){
     int n=c.bones.Length;c.rest=new Quaternion[n];c.positions=new Vector3[n];c.targets=new Vector3[n];c.across=new Vector3[n];c.restAcross=new Vector3[n];
     for(int i=0;i<n;i++){c.rest[i]=c.bones[i].localRotation;c.positions[i]=c.bones[i].position;c.restAcross[i]=c.bones[i].InverseTransformDirection(transform.forward);}
@@ -67,18 +69,18 @@ namespace Yachiyo {
    Sleeves=new AuthoredSleevePhysics(this);
    Native=new NativeClothRig(this);
   }
-  public void SetSimulation(bool value){simulationEnabled=value;ResetSimulation();}
+  public void SetSimulation(bool value){simulationEnabled=value;if(FullCloth){FullCloth.SetSimulation(value);return;}ResetSimulation();}
   void AddHandCollider(Transform hand,Transform finger,string name,List<CapsuleCollider> colliders){
    if(!hand||!finger)return;var tip=finger.position+(finger.position-finger.parent.position).normalized*.035f;var axis=tip-hand.position;
    var t=new GameObject("Cloth collision "+name).transform;t.SetParent(hand,false);t.position=(hand.position+tip)*.5f;t.rotation=Quaternion.FromToRotation(Vector3.up,axis);
    var c=t.gameObject.AddComponent<CapsuleCollider>();c.direction=1;c.radius=.034f;c.height=axis.magnitude+c.radius*2;c.isTrigger=true;colliders.Add(c);
   }
-  public void ResetSimulation(){reset=true;Sleeves?.Reset();}
+  public void ResetSimulation(){if(FullCloth){FullCloth.ResetSimulation();return;}reset=true;Sleeves?.Reset();}
   void RestorePose(){foreach(var c in chains)for(int i=0;i<c.bones.Length;i++)c.bones[i].localRotation=c.rest[i];}
-  void Update(){if(initialized)Native.Prepare();}
+  void Update(){if(initialized&&!FullCloth)Native.Prepare();}
   void LateUpdate()=>Tick(Time.deltaTime);
   public void Tick(float deltaTime){
-   Initialize();var timer=System.Diagnostics.Stopwatch.StartNew();RestorePose();LastMaxOffset=0;LastMaxPenetration=0;
+   Initialize();if(FullCloth){LastTransferMs=FullCloth.LastSimulationMs;return;}var timer=System.Diagnostics.Stopwatch.StartNew();RestorePose();LastMaxOffset=0;LastMaxPenetration=0;
    bool jump=(hips.position-previousHips).sqrMagnitude>.5f*.5f||Quaternion.Angle(hips.rotation,previousRotation)>90||deltaTime>.2f;
    previousHips=hips.position;previousRotation=hips.rotation;
    foreach(var c in chains){

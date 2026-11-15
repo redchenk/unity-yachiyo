@@ -1,13 +1,16 @@
 {
   "dependencies": {
+    "com.unity.burst": "2.0.0",
+    "com.unity.collections": "6.6.0",
+    "com.unity.mathematics": "1.4.0",
     "com.unity.modules.animation": "1.0.0",
     "com.unity.modules.audio": "1.0.0",
     "com.unity.modules.cloth": "1.0.0",
     "com.unity.modules.imgui": "1.0.0",
     "com.unity.modules.jsonserialize": "1.0.0",
     "com.unity.modules.physics": "1.0.0",
+    "com.unity.modules.screencapture": "1.0.0",
     "com.unity.modules.unitywebrequest": "1.0.0",
-    "com.unity.modules.unitywebrequestaudio": "1.0.0",
-    "com.unity.modules.screencapture": "1.0.0"
+    "com.unity.modules.unitywebrequestaudio": "1.0.0"
   }
 }

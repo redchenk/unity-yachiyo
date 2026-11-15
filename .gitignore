@@ -64,3 +64,8 @@ node_modules/
 /director/models
 
 .vite/
+
+# Licensed local Unity asset; distribute compiled player only.
+/Magica Cloth 2*.unitypackage
+/UnityProject/Assets/MagicaCloth2/
+/UnityProject/Assets/MagicaCloth2.meta
