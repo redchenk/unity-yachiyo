@@ -49,7 +49,7 @@ namespace Yachiyo {
     string n=bones[p.Item1].name;if(n.StartsWith("Spine")||n.StartsWith("Hips")||n.StartsWith("Chest")||n.StartsWith("Neck"))sum+=p.Item2;
    }return sum;
   }
-  void PrepareFurisode(SkinnedMeshRenderer r){
+  void PrepareBoneFurisode(SkinnedMeshRenderer r,float seamWidth=.24f){
    furisodeSource=r;furisodeOriginal=r.sharedMesh;furisodeOriginalBones=r.bones.ToArray();
    var original=furisodeOriginal;var vertices=original.vertices;var originalWeights=original.boneWeights;var weights=originalWeights.ToArray();var triangles=original.triangles;
    var bones=r.bones.ToList();var bindposes=original.bindposes.ToList();furisodeMask=new bool[vertices.Length];sleeveFixedMask=new bool[vertices.Length];
@@ -118,7 +118,7 @@ namespace Yachiyo {
      // A connected component contains a few bodice vertices with small sleeve
      // weights. Keep those on their authored torso skin; component membership
      // alone is not permission to pull the chest/back into the sleeve grid.
-     float blend=bowIds.Contains(i)?1:Mathf.SmoothStep(0,1,distance/.24f)*shoulder;
+     float blend=bowIds.Contains(i)?1:Mathf.SmoothStep(0,1,distance/seamWidth)*shoulder;
      sleeveFixedMask[i]=blend==0;
      var values=new Dictionary<int,float>();void Add(int bone,float w){if(w>0)values[bone]=values.TryGetValue(bone,out var old)?old+w:w;}
      var w=originalWeights[i];Add(w.boneIndex0,w.weight0*(1-blend));Add(w.boneIndex1,w.weight1*(1-blend));Add(w.boneIndex2,w.weight2*(1-blend));Add(w.boneIndex3,w.weight3*(1-blend));
@@ -135,6 +135,7 @@ namespace Yachiyo {
   bool IsFurisodeDriven(SkinnedMeshRenderer renderer,int vertex)=>renderer==furisodeSource&&furisodeMask[vertex];
   bool IsSleeveFixed(SkinnedMeshRenderer renderer,int vertex)=>renderer==furisodeSource&&sleeveFixedMask[vertex];
   void BuildFurisodeGroups(MagicaCloth garment){
+   if(meshSleeves.Count>0){BuildMeshSleeveGroups(garment);return;}
    foreach(var grid in furisodeGrids){
     var cloth=NewGroup("Furisode surface / "+grid.side,out var info);var s=cloth.SerializeData;info.type="BoneCloth";info.renderers=new[]{furisodeSource.name};info.roots=grid.anchors.Select(a=>a.root.name).ToArray();
     s.clothType=ClothProcess.ClothType.BoneCloth;s.rootBones.AddRange(grid.anchors.Select(a=>a.root));s.connectionMode=RenderSetupData.BoneConnectionMode.SequentialNonLoopMesh;s.rotationalInterpolation=1;s.rootRotation=0;

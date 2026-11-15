@@ -74,7 +74,7 @@ namespace Yachiyo {
    BoneGroup("Obi accessories",Roots(t=>t.name.StartsWith("Acs_Obi",StringComparison.Ordinal)),.75f,10,.008f,garments);
    ColliderCount=colliders.Count;
    foreach(var cloth in cloths){cloth.Initialize();if(!cloth.BuildAndRun())Fail("Build could not start: "+cloth.name+" / "+cloth.Process.Result.GetResultString());}
-   Debug.Log("FULL_CLOTH_CONFIG groups="+groups.Count+" colliders="+ColliderCount+" solver=MagicaCloth2-2.15.0");
+   Debug.Log("FULL_CLOTH_CONFIG groups="+groups.Count+" colliders="+ColliderCount+" solver=MagicaCloth2-2.18.4");
   }
   static bool SettingsNode(Transform t){for(var p=t;p;p=p.parent)if(p.name=="PB")return true;return false;}
   Transform[] Roots(Func<Transform,bool> matches)=>originalBones.Where(matches).Where(t=>!t.parent||!matches(t.parent)).ToArray();
@@ -138,9 +138,9 @@ namespace Yachiyo {
      var before=(VertexAttribute[])attributes.Clone();
      for(int k=0;k<triangles.Length;k+=3){int a=triangles[k],b=triangles[k+1],c=triangles[k+2];
       if(before[a]==VertexAttribute.Invalid&&before[b]==VertexAttribute.Invalid&&before[c]==VertexAttribute.Invalid)continue;
-      if(attributes[a]==VertexAttribute.Invalid&&!IsSleeveFixed(r,a))attributes[a]=VertexAttribute.Fixed;
-      if(attributes[b]==VertexAttribute.Invalid&&!IsSleeveFixed(r,b))attributes[b]=VertexAttribute.Fixed;
-      if(attributes[c]==VertexAttribute.Invalid&&!IsSleeveFixed(r,c))attributes[c]=VertexAttribute.Fixed;
+      if(attributes[a]==VertexAttribute.Invalid&&!IsSleeveFixed(r,a)&&!IsFurisodeDriven(r,a))attributes[a]=VertexAttribute.Fixed;
+      if(attributes[b]==VertexAttribute.Invalid&&!IsSleeveFixed(r,b)&&!IsFurisodeDriven(r,b))attributes[b]=VertexAttribute.Fixed;
+      if(attributes[c]==VertexAttribute.Invalid&&!IsSleeveFixed(r,c)&&!IsFurisodeDriven(r,c))attributes[c]=VertexAttribute.Fixed;
      }
     }
     info.fixedVertices+=attributes.Count(a=>a==VertexAttribute.Fixed);
@@ -223,7 +223,7 @@ namespace Yachiyo {
    var t=new GameObject("Magica body / "+label).transform;t.SetParent(label=="Shoulders"?animator.GetBoneTransform(HumanBodyBones.Chest):a,false);t.position=(a.position+b.position)*.5f;t.rotation=Quaternion.FromToRotation(Vector3.up,b.position-a.position);
    var capsule=t.gameObject.AddComponent<MagicaCapsuleCollider>();capsule.direction=MagicaCapsuleCollider.Direction.Y;capsule.SetSize(radius,radius,Vector3.Distance(a.position,b.position)+radius*2);colliders.Add(capsule);
   }
-  void BeforeSimulation(){SimulationFrames++;simulationStart=System.Diagnostics.Stopwatch.GetTimestamp();UpdateFurisodeAnchors();}
+  void BeforeSimulation(){SimulationFrames++;simulationStart=System.Diagnostics.Stopwatch.GetTimestamp();UpdateFurisodeAnchors();UpdateSleeveTieRoots();}
   void AfterSimulation(){
    // Small stiff decorative ears expose fixed-step quantization more than cloth.
    // Interpolate only their displayed rotation, retaining the solver's inertia.
@@ -237,7 +237,7 @@ namespace Yachiyo {
    LastSimulationMs=(float)((System.Diagnostics.Stopwatch.GetTimestamp()-simulationStart)*1000.0/System.Diagnostics.Stopwatch.Frequency);
   }
   void Fail(string message){Failed=true;Ready=false;Failure=message;Debug.LogError("FULL_CLOTH_FAILED "+message);}
-  void OnDestroy(){MagicaManager.OnPreSimulation-=BeforeSimulation;MagicaManager.OnPostSimulation-=AfterSimulation;if(furisodeRuntime)Destroy(furisodeRuntime);}
+  void OnDestroy(){DisposeMeshSleeves();MagicaManager.OnPreSimulation-=BeforeSimulation;MagicaManager.OnPostSimulation-=AfterSimulation;if(furisodeRuntime)Destroy(furisodeRuntime);}
 #endif
   public void SetSimulation(bool value){
    Active=value;

@@ -11,7 +11,7 @@ namespace Yachiyo {
  public sealed class FullClothVerification:MonoBehaviour {
   [Serializable]class Report {
    public bool passed,ready,finite=true,noLegacySolvers,originalMeshes,stableAttachments,toggleOff,toggleOn;
-   public string solver="Magica Cloth 2.15.0",failure,device;
+   public string solver="Magica Cloth 2.18.4",failure,device;
    public int frames,colliders,proxyVertices,furisodeControlPoints;public float meanFrameMs,p95FrameMs,meanSimulationMs,p95SimulationMs,maxAttachmentError,maxPinnedSurfaceError,ornamentSettledSpeed,ornamentMaxAngle,furisodeMaxLocalBend,furisodeMeanLocalBend;
    public List<FullCharacterCloth.GroupInfo> groups;public List<State> states=new List<State>();
    public FullCharacterCloth.HangingSleeveSample[] hangingSleeves;
@@ -86,9 +86,9 @@ namespace Yachiyo {
    Debug.Log("CLOTH_RUNTIME simulationFrames="+cloth.SimulationFrames);
    foreach(var c in cloth.GetComponentsInChildren<MagicaCloth>()){var t=MagicaManager.Team.GetTeamDataRef(c.Process.TeamId);Debug.Log("CLOTH_RUNTIME "+c.name+" enabled="+c.enabled+" process="+t.IsProcess+" enable="+t.IsEnable+" suspend="+t.flag.IsSet(TeamManager.Flag_SyncSuspend)+" steps="+t.updateCount+" blend="+t.blendWeight+" time="+t.time+" scale="+t.nowTimeScale);}
 #endif
-   report.passed=(cloth.FurisodeControlPoints==0||report.furisodeMaxLocalBend>15)&&report.ready&&report.finite&&report.noLegacySolvers&&report.originalMeshes&&report.stableAttachments&&report.toggleOff&&report.toggleOn&&report.ornamentSettledSpeed<4&&report.groups.Count==(cloth.FurisodeControlPoints>0?8:6)&&report.groups.All(g=>g.built&&g.movable>0)&&report.hangingSleeves.All(s=>s.vertices>400&&s.movable==s.vertices&&s.meanSimulationOffset>.005f&&s.meanSimulationOffset<.8f&&s.maxSimulationOffset<1.3f);
-   if(cloth.FurisodeControlPoints>0)report.passed&=report.sleeveRegions.Length==6&&report.sleeveRegions.All(s=>s.vertices>=10&&s.driven>=s.vertices*.8f&&s.driven+s.protectedVertices==s.vertices&&s.meanSimulationOffset>.001f&&s.meanSimulationOffset<.4f&&s.maxSimulationOffset<.8f);
-   if(cloth.FurisodeControlPoints>0)report.passed&=SleeveAttachmentsPass();
+   report.passed=(cloth.FurisodeControlPoints==0||report.furisodeMaxLocalBend>15)&&report.ready&&report.finite&&report.noLegacySolvers&&report.originalMeshes&&report.stableAttachments&&report.toggleOff&&report.toggleOn&&report.ornamentSettledSpeed<4&&report.groups.Count==(cloth.MeshSleeveCount>0?9:cloth.FurisodeControlPoints>0?8:6)&&report.groups.All(g=>g.built&&g.movable>0)&&report.hangingSleeves.All(s=>s.vertices>400&&s.movable==s.vertices&&s.meanSimulationOffset>.005f&&s.meanSimulationOffset<.8f&&s.maxSimulationOffset<1.3f);
+   if(cloth.FurisodeControlPoints>0||cloth.MeshSleeveCount>0)report.passed&=report.sleeveRegions.Length==6&&report.sleeveRegions.All(s=>s.vertices>=10&&s.driven>=s.vertices*.8f&&s.driven+s.protectedVertices==s.vertices&&s.meanSimulationOffset>.001f&&s.meanSimulationOffset<.4f&&s.maxSimulationOffset<.8f);
+   if(cloth.FurisodeControlPoints>0||cloth.MeshSleeveCount>0)report.passed&=SleeveAttachmentsPass();
    Finish();
   }
   static float Percentile(List<float> values){var sorted=values.OrderBy(v=>v).ToArray();return sorted[Mathf.Min(sorted.Length-1,(int)(sorted.Length*.95f))];}
