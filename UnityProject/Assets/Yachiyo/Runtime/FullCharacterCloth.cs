@@ -243,6 +243,7 @@ namespace Yachiyo {
    Active=value;
 #if YACHIYO_MAGICA
    earDisplayReady=false;foreach(var c in cloths){c.enabled=value;if(value)c.ResetCloth();}
+   if(!value)RestoreSleeveTies();
 #endif
   }
   public void ResetSimulation(){

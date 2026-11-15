@@ -17,10 +17,23 @@ namespace Yachiyo {
    public FullCharacterCloth.HangingSleeveSample[] hangingSleeves;
    public FullCharacterCloth.SleeveRegionSample[] sleeveRegions;
    public int bowAttachments;public float maxAddedBowGap,maxSleeveBoundaryStretch,maxSleeveFixedError;
+   public float tieRootMaxSpeed,tieBoneMaxSpeed,tieSettledMaxSpeed,tieRootSettledSpeed,tieBoneSettledSpeed,tieMaxLocalStretch;public int tieSamples;
+   public string tieSettledNode;
   }
   [Serializable]class State{public string name;public int frames;}
   string path;AvatarMotion avatar;FullCharacterCloth cloth;GarmentPhysics garment;Report report=new Report();
   readonly List<float> frameMs=new List<float>(),simulationMs=new List<float>();
+  Transform[] tieNodes;Quaternion[] tiePrevious;Vector3[] tieRestPositions;
+  void SampleTieMotion(bool settled){
+   if(tieNodes==null){tieNodes=avatar.GetComponentsInChildren<Transform>().Where(t=>t.name.StartsWith("Acs_UnderSleeveRibbon_")).ToArray();tiePrevious=tieNodes.Select(t=>t.name.Contains("Root")?t.rotation:t.localRotation).ToArray();tieRestPositions=tieNodes.Select(t=>t.localPosition).ToArray();return;}
+   report.tieSamples++;
+   for(int i=0;i<tieNodes.Length;i++){
+    bool root=tieNodes[i].name.Contains("Root");var q=root?tieNodes[i].rotation:tieNodes[i].localRotation;var delta=q*Quaternion.Inverse(tiePrevious[i]);
+    float speed=2*Mathf.Atan2(new Vector3(delta.x,delta.y,delta.z).magnitude,Mathf.Abs(delta.w))*Mathf.Rad2Deg/Mathf.Max(.001f,Time.unscaledDeltaTime);
+    if(root)report.tieRootMaxSpeed=Mathf.Max(report.tieRootMaxSpeed,speed);else{report.tieBoneMaxSpeed=Mathf.Max(report.tieBoneMaxSpeed,speed);report.tieMaxLocalStretch=Mathf.Max(report.tieMaxLocalStretch,Mathf.Abs(tieNodes[i].localPosition.magnitude-tieRestPositions[i].magnitude));}
+    if(settled){if(speed>report.tieSettledMaxSpeed)report.tieSettledNode=tieNodes[i].name;report.tieSettledMaxSpeed=Mathf.Max(report.tieSettledMaxSpeed,speed);if(root)report.tieRootSettledSpeed=Mathf.Max(report.tieRootSettledSpeed,speed);else report.tieBoneSettledSpeed=Mathf.Max(report.tieBoneSettledSpeed,speed);}tiePrevious[i]=q;
+   }
+  }
   [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]static void Install(){var args=Environment.GetCommandLineArgs();int i=Array.IndexOf(args,"--verify-full-cloth");if(i>=0&&i+1<args.Length)new GameObject("Full cloth verification").AddComponent<FullClothVerification>().path=args[i+1];}
   IEnumerator Start(){
    Directory.CreateDirectory(path);Application.runInBackground=true;Application.targetFrameRate=60;
@@ -47,6 +60,7 @@ namespace Yachiyo {
     var state=new State{name=name};float start=Time.realtimeSinceStartup;int capture=0;
     while(Time.realtimeSinceStartup-start<6){
      yield return new WaitForEndOfFrame();state.frames++;report.frames++;
+     SampleTieMotion(false);
      frameMs.Add(Time.unscaledDeltaTime*1000);simulationMs.Add(cloth.LastSimulationMs);var bend=cloth.MeasureFurisodeBend();report.furisodeMaxLocalBend=Mathf.Max(report.furisodeMaxLocalBend,bend.y);report.furisodeMeanLocalBend+=bend.x;
      for(int i=0;i<attachments.Length;i++)report.maxAttachmentError=Mathf.Max(report.maxAttachmentError,Vector3.Distance(attachmentPositions[i],attachments[i].localPosition));
      #if YACHIYO_MAGICA
@@ -58,11 +72,12 @@ namespace Yachiyo {
     report.states.Add(state);
    }
    // Freeze only the body's input to isolate spontaneous ornament jitter.
-   avatar.enabled=false;yield return new WaitForSeconds(2);
+   avatar.enabled=false;yield return new WaitForSeconds(2);tieNodes=null;
    var ears=avatar.GetComponentsInChildren<Transform>().Where(t=>t.name=="Acs_Obi_A001"||t.name=="Acs_Obi_B001").ToArray();
    var earStart=ears.Select(t=>t.localRotation).ToArray();var earPrevious=earStart.ToArray();
    float stillStart=Time.realtimeSinceStartup;
    while(Time.realtimeSinceStartup-stillStart<3){yield return new WaitForEndOfFrame();
+    SampleTieMotion(true);
     for(int i=0;i<ears.Length;i++){
      var q=ears[i].localRotation;var delta=q*Quaternion.Inverse(earPrevious[i]);
      float angle=2*Mathf.Atan2(new Vector3(delta.x,delta.y,delta.z).magnitude,Mathf.Abs(delta.w))*Mathf.Rad2Deg;
@@ -89,11 +104,13 @@ namespace Yachiyo {
    report.passed=(cloth.FurisodeControlPoints==0||report.furisodeMaxLocalBend>15)&&report.ready&&report.finite&&report.noLegacySolvers&&report.originalMeshes&&report.stableAttachments&&report.toggleOff&&report.toggleOn&&report.ornamentSettledSpeed<4&&report.groups.Count==(cloth.MeshSleeveCount>0?9:cloth.FurisodeControlPoints>0?8:6)&&report.groups.All(g=>g.built&&g.movable>0)&&report.hangingSleeves.All(s=>s.vertices>400&&s.movable==s.vertices&&s.meanSimulationOffset>.005f&&s.meanSimulationOffset<.8f&&s.maxSimulationOffset<1.3f);
    if(cloth.FurisodeControlPoints>0||cloth.MeshSleeveCount>0)report.passed&=report.sleeveRegions.Length==6&&report.sleeveRegions.All(s=>s.vertices>=10&&s.driven>=s.vertices*.8f&&s.driven+s.protectedVertices==s.vertices&&s.meanSimulationOffset>.001f&&s.meanSimulationOffset<.4f&&s.maxSimulationOffset<.8f);
    if(cloth.FurisodeControlPoints>0||cloth.MeshSleeveCount>0)report.passed&=SleeveAttachmentsPass();
+   if(cloth.MeshSleeveCount>0)report.passed&=TieMotionPass();
    Finish();
   }
   static float Percentile(List<float> values){var sorted=values.OrderBy(v=>v).ToArray();return sorted[Mathf.Min(sorted.Length-1,(int)(sorted.Length*.95f))];}
   void SampleSleeveAttachments(){var s=cloth.MeasureSleeveAttachments();report.bowAttachments=s.bows;report.maxAddedBowGap=Mathf.Max(report.maxAddedBowGap,s.maxAddedBowGap);report.maxSleeveBoundaryStretch=Mathf.Max(report.maxSleeveBoundaryStretch,s.maxBoundaryStretch);report.maxSleeveFixedError=Mathf.Max(report.maxSleeveFixedError,s.maxFixedError);}
   bool SleeveAttachmentsPass()=>report.bowAttachments==2&&report.maxAddedBowGap<.015f&&report.maxSleeveBoundaryStretch<.035f&&report.maxSleeveFixedError<.002f;
+  bool TieMotionPass()=>report.tieSamples>120&&report.tieRootMaxSpeed<250&&report.tieBoneMaxSpeed<100&&report.tieRootSettledSpeed<90&&report.tieBoneSettledSpeed<12&&report.tieMaxLocalStretch<.001f;
   IEnumerator SleeveAttachmentResponse(){
    avatar.enabled=false;var animator=avatar.GetComponent<Animator>();var rootRest=avatar.transform.rotation;
    var arms=new[]{animator.GetBoneTransform(HumanBodyBones.RightUpperArm),animator.GetBoneTransform(HumanBodyBones.LeftUpperArm)};
@@ -102,7 +119,7 @@ namespace Yachiyo {
    var armRest=arms.Select(t=>t.rotation).ToArray();var elbowRest=elbows.Select(t=>t.localRotation).ToArray();
    float Envelope(float t)=>t<0||t>=6?0:t<2?Mathf.SmoothStep(0,1,t/2):t<4?1:Mathf.SmoothStep(1,0,(t-4)/2);
    float start=Time.realtimeSinceStartup;int capture=0;
-   while(Time.realtimeSinceStartup-start<22){
+   while(Time.realtimeSinceStartup-start<30){
     float t=Time.realtimeSinceStartup-start;float right=Envelope(t-2),left=Envelope(t-8),both=Envelope(t-14);
     avatar.transform.rotation=Quaternion.AngleAxis((right-left+both)*30,Vector3.up)*rootRest;
     for(int side=0;side<2;side++){
@@ -110,9 +127,10 @@ namespace Yachiyo {
      elbows[side].localRotation=elbowRest[side];var axis=Vector3.Cross(hands[side].position-elbows[side].position,avatar.transform.forward).normalized;elbows[side].rotation=Quaternion.AngleAxis(weight*70,axis)*elbows[side].rotation;
     }
     yield return new WaitForEndOfFrame();report.frames++;
+    SampleTieMotion(t>27);
     if(t>capture*.5f){SampleSleeveAttachments();Capture("attachment-"+capture.ToString("00"),capture%3==2?160:20);capture++;}
    }
-   report.passed=SleeveAttachmentsPass();Finish();
+   report.passed=SleeveAttachmentsPass()&&(cloth.MeshSleeveCount==0||TieMotionPass());Finish();
   }
   IEnumerator SleeveResponse(){
    avatar.enabled=false;
