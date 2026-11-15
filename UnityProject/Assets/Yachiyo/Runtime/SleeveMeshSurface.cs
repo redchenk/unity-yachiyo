@@ -108,7 +108,7 @@ namespace Yachiyo {
    // The sewn root has one orientation owner; child-based rootRotation would
    // rotate it in the solver, then rotate every child again on display transfer.
    tieCloth.rootRotation=0;tieCloth.inertiaConstraint.anchor=null;tieCloth.inertiaConstraint.worldInertia=.1f;tieCloth.inertiaConstraint.localInertia=.1f;
-   tieCloth.angleLimitConstraint.limitAngle=new CurveSerializeData(12);tieCloth.angleRestorationConstraint.velocityAttenuation=.8f;
+   tieCloth.angleLimitConstraint.limitAngle=new CurveSerializeData(5);tieCloth.angleRestorationConstraint.velocityAttenuation=.8f;
    tieCloth.selfCollisionConstraint.syncMode=SelfCollisionConstraint.SelfCollisionMode.None;tieCloth.selfCollisionConstraint.syncPartner=null;
   }
   void UpdateSleeveTieRoots(){
@@ -127,7 +127,7 @@ namespace Yachiyo {
     for(int i=0;i<tie.nodes.Length;i++){
      // Keep the authored loop lengths; secondary motion changes their angles,
      // not the spacing of the knot branches. Filter only the small local sway.
-     var target=Quaternion.RotateTowards(tie.restRotations[i],tie.solverNodes[i].localRotation,12);
+     var target=Quaternion.RotateTowards(tie.restRotations[i],tie.solverNodes[i].localRotation,5);
      tie.displayRotations[i]=Quaternion.RotateTowards(tie.displayRotations[i],Quaternion.Slerp(tie.displayRotations[i],target,swayAlpha),40*dt);
      tie.nodes[i].SetLocalPositionAndRotation(tie.restPositions[i],tie.displayRotations[i]);
     }
