@@ -15,6 +15,7 @@ namespace Yachiyo {
    public int frames,colliders,proxyVertices,furisodeControlPoints;public float meanFrameMs,p95FrameMs,meanSimulationMs,p95SimulationMs,maxAttachmentError,maxPinnedSurfaceError,ornamentSettledSpeed,ornamentMaxAngle,furisodeMaxLocalBend,furisodeMeanLocalBend;
    public List<FullCharacterCloth.GroupInfo> groups;public List<State> states=new List<State>();
    public FullCharacterCloth.HangingSleeveSample[] hangingSleeves;
+   public FullCharacterCloth.SleeveRegionSample[] sleeveRegions;
   }
   [Serializable]class State{public string name;public int frames;}
   string path;AvatarMotion avatar;FullCharacterCloth cloth;GarmentPhysics garment;Report report=new Report();
@@ -31,7 +32,7 @@ namespace Yachiyo {
    if(!cloth.Ready){Finish();yield break;}
    report.noLegacySolvers=garment.Native==null&&garment.Sleeves==null&&!avatar.GetComponents<HairPhysics>().Any(h=>h.enabled)&&avatar.GetComponentsInChildren<Cloth>().Length==0;
    avatar.followPointer=false;yield return new WaitForSeconds(3);
-   if(Array.IndexOf(Environment.GetCommandLineArgs(),"--cloth-sleeve-stress")>=0){yield return SleeveResponse();yield break;}
+   if(Array.IndexOf(Environment.GetCommandLineArgs(),"--cloth-sleeve-stress")>=0||Array.IndexOf(Environment.GetCommandLineArgs(),"--cloth-sleeve-junction-stress")>=0){yield return SleeveResponse();yield break;}
    var attachments=avatar.GetComponentsInChildren<Transform>().Where(t=>t.name=="Head"||t.name=="Neck1"||t.name=="Neck2"||t.name.Contains("约束基准")).ToArray();
    var attachmentPositions=attachments.Select(t=>t.localPosition).ToArray();
    var renderers=avatar.GetComponentsInChildren<SkinnedMeshRenderer>().Where(r=>r.name=="cloth1"||r.name=="cloth2"||r.name=="hair_back"||r.name=="hair_front").ToArray();
@@ -78,22 +79,27 @@ namespace Yachiyo {
    Capture("off",0);garment.SetSimulation(true);yield return new WaitForSeconds(3);yield return new WaitForEndOfFrame();report.toggleOn=cloth.Active&&cloth.Ready;Capture("restored",0);
    report.furisodeMeanLocalBend/=Mathf.Max(1,report.frames);report.meanFrameMs=frameMs.Average();report.p95FrameMs=Percentile(frameMs);report.meanSimulationMs=simulationMs.Average();report.p95SimulationMs=Percentile(simulationMs);
    report.hangingSleeves=cloth.MeasureHangingSleeves();
+   report.sleeveRegions=cloth.MeasureSleeveRegions();
 #if YACHIYO_MAGICA
    Debug.Log("CLOTH_RUNTIME simulationFrames="+cloth.SimulationFrames);
    foreach(var c in cloth.GetComponentsInChildren<MagicaCloth>()){var t=MagicaManager.Team.GetTeamDataRef(c.Process.TeamId);Debug.Log("CLOTH_RUNTIME "+c.name+" enabled="+c.enabled+" process="+t.IsProcess+" enable="+t.IsEnable+" suspend="+t.flag.IsSet(TeamManager.Flag_SyncSuspend)+" steps="+t.updateCount+" blend="+t.blendWeight+" time="+t.time+" scale="+t.nowTimeScale);}
 #endif
    report.passed=(cloth.FurisodeControlPoints==0||report.furisodeMaxLocalBend>15)&&report.ready&&report.finite&&report.noLegacySolvers&&report.originalMeshes&&report.stableAttachments&&report.toggleOff&&report.toggleOn&&report.ornamentSettledSpeed<4&&report.groups.Count==(cloth.FurisodeControlPoints>0?8:6)&&report.groups.All(g=>g.built&&g.movable>0)&&report.hangingSleeves.All(s=>s.vertices>400&&s.movable==s.vertices&&s.meanSimulationOffset>.005f&&s.meanSimulationOffset<.8f&&s.maxSimulationOffset<1.3f);
+   if(cloth.FurisodeControlPoints>0)report.passed&=report.sleeveRegions.Length==6&&report.sleeveRegions.All(s=>s.vertices>=10&&s.driven==s.vertices&&s.meanSimulationOffset>.001f&&s.meanSimulationOffset<.4f&&s.maxSimulationOffset<.8f);
    Finish();
   }
   static float Percentile(List<float> values){var sorted=values.OrderBy(v=>v).ToArray();return sorted[Mathf.Min(sorted.Length-1,(int)(sorted.Length*.95f))];}
   IEnumerator SleeveResponse(){
    avatar.enabled=false;
    var animator=avatar.GetComponent<Animator>();var arm=animator.GetBoneTransform(HumanBodyBones.RightUpperArm);var startRotation=arm.rotation;
+   bool junction=Array.IndexOf(Environment.GetCommandLineArgs(),"--cloth-sleeve-junction-stress")>=0;
+   var forearm=animator.GetBoneTransform(HumanBodyBones.RightLowerArm);var hand=animator.GetBoneTransform(HumanBodyBones.RightHand);var elbowRest=forearm.localRotation;
    float start=Time.realtimeSinceStartup;int capture=0;
    while(Time.realtimeSinceStartup-start<14){
     float t=Time.realtimeSinceStartup-start;
     float angle=t<2?0:t<4?Mathf.SmoothStep(0,65,(t-2)/2):t<6?65:t<7?Mathf.SmoothStep(65,0,t-6):0;
     arm.rotation=Quaternion.AngleAxis(angle,avatar.transform.forward)*startRotation;
+    if(junction){forearm.localRotation=elbowRest;var axis=Vector3.Cross(hand.position-forearm.position,avatar.transform.forward).normalized;forearm.rotation=Quaternion.AngleAxis(angle,axis)*forearm.rotation;}
     yield return new WaitForEndOfFrame();
     if(t>capture*.5f){Capture("response-"+capture.ToString("00"),25);capture++;}
    }
@@ -104,7 +110,9 @@ namespace Yachiyo {
    if(Array.IndexOf(Environment.GetCommandLineArgs(),"--diagnose-magica-sleeves")>=0)cloth.WriteSleeveDiagnostics(Path.Combine(path,name+".json"));
    var camera=new GameObject("Full cloth inspection").AddComponent<Camera>();camera.enabled=false;camera.clearFlags=CameraClearFlags.SolidColor;camera.backgroundColor=new Color(.055f,.075f,.095f);camera.fieldOfView=38;camera.nearClipPlane=.03f;
    var target=avatar.CameraAnchor;target.y=.95f;camera.transform.position=target+Quaternion.Euler(0,yaw,0)*new Vector3(0,.1f,2.9f);camera.transform.LookAt(target);
-   var rt=new RenderTexture(800,1000,24);var texture=new Texture2D(800,1000,TextureFormat.RGB24,false);camera.targetTexture=rt;camera.Render();RenderTexture.active=rt;texture.ReadPixels(new Rect(0,0,800,1000),0,0);texture.Apply();File.WriteAllBytes(Path.Combine(path,name+".png"),texture.EncodeToPNG());RenderTexture.active=null;Destroy(rt);Destroy(texture);Destroy(camera.gameObject);
+   bool junction=Array.IndexOf(Environment.GetCommandLineArgs(),"--cloth-sleeve-junction-stress")>=0;
+   if(junction){target.y=1.12f;camera.transform.position=target+Quaternion.Euler(0,yaw,0)*new Vector3(0,.1f,2.4f);camera.transform.LookAt(target);}
+   int width=junction?1200:800;var rt=new RenderTexture(width,1000,24);var texture=new Texture2D(width,1000,TextureFormat.RGB24,false);camera.targetTexture=rt;camera.Render();RenderTexture.active=rt;texture.ReadPixels(new Rect(0,0,width,1000),0,0);texture.Apply();File.WriteAllBytes(Path.Combine(path,name+".png"),texture.EncodeToPNG());RenderTexture.active=null;Destroy(rt);Destroy(texture);Destroy(camera.gameObject);
   }
  }
 }

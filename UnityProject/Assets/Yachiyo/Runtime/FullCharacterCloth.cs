@@ -8,7 +8,7 @@ using MagicaCloth2;
 
 namespace Yachiyo {
  // One owner for all secondary motion. Original geometry and shoulder support
- // stay authored; the hanging sleeve has a runtime copy of its skin weights.
+ // stay authored; the continuous sleeve has a runtime copy of its skin weights.
  public sealed partial class FullCharacterCloth : MonoBehaviour {
   public bool Ready {get;private set;}
   public bool Failed {get;private set;}
@@ -62,7 +62,7 @@ namespace Yachiyo {
    var clothes=GetComponentsInChildren<SkinnedMeshRenderer>().Where(r=>r.name=="cloth1"||r.name=="cloth2").OrderBy(r=>r.name).ToArray();
    if(clothes.Length!=2){Fail("Expected the original cloth1 and cloth2 renderers");return;}
    if(Array.IndexOf(Environment.GetCommandLineArgs(),"--mesh-furisode-baseline")<0)PrepareFurisode(clothes.Single(r=>r.name=="cloth1"));
-   // Cuffs, skirts and ribbons share one collision surface. Both furisode
+   // Skirts and ribbons share one collision surface. Both continuous sleeve
    // grids synchronize with it, retaining sleeve-to-skirt contact.
    var garments=MeshGroup("Garments · sleeves / skirt / ribbons",clothes);
    BuildFurisodeGroups(garments);

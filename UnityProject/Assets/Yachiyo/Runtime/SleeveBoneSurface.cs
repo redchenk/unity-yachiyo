@@ -6,8 +6,8 @@ using UnityEngine;
 using MagicaCloth2;
 #endif
 namespace Yachiyo {
- // A single deforming bone surface drives both walls and their lining. The
- // source triangles, UVs and shoulder seam stay unchanged. Horizontal links
+ // A continuous bone surface drives the forearm shell, cuff, hanging walls
+ // and lining. Source triangles, UVs and shoulder seam stay unchanged. Horizontal links
  // make this a cloth sheet rather than independent pendulums.
  public sealed partial class FullCharacterCloth {
   public int FurisodeControlPoints {
@@ -31,16 +31,16 @@ namespace Yachiyo {
    return new Vector2(total/Mathf.Max(1,count),maximum);
   }
 #if YACHIYO_MAGICA
-  const int SleeveColumns=8,SleeveRows=7;
+  const int SleeveColumns=8,SleeveRows=11;
   SkinnedMeshRenderer furisodeSource;Mesh furisodeOriginal,furisodeRuntime;Transform[] furisodeOriginalBones;
   SurfaceBinding furisodeBind;Vector3[] furisodeVertices;BoneWeight[] furisodeWeights;
   bool[] furisodeMask;readonly List<SleeveGrid> furisodeGrids=new List<SleeveGrid>();
   sealed class SleeveAnchor {public Transform root,support;public int[] sourceIds;public Quaternion bindSupport,bindRotation;}
   sealed class SleeveGrid {public string side;public Transform[,] nodes;public Quaternion[,] rest;public SleeveAnchor[] anchors;}
   static string SleevePositionKey(Vector3 p)=>Mathf.RoundToInt(p.x*100000)+"/"+Mathf.RoundToInt(p.y*100000)+"/"+Mathf.RoundToInt(p.z*100000);
-  static float LowerSleeveWeight(BoneWeight w,Transform[] bones,string side){
+  static float SleeveSurfaceWeight(BoneWeight w,Transform[] bones,string side){
    float sum=0;foreach(var p in new[]{(w.boneIndex0,w.weight0),(w.boneIndex1,w.weight1),(w.boneIndex2,w.weight2),(w.boneIndex3,w.weight3)}){
-    string n=bones[p.Item1].name;if(n.Contains("CenterSleeve_00")&&!n.Contains("_001_")&&n.EndsWith(side))sum+=p.Item2;
+    string n=bones[p.Item1].name;if(n.EndsWith(side)&&(n.StartsWith("Acs_FrontSleeve_")||n.StartsWith("Acs_BackSleeve_")||n.StartsWith("Acs_ArmSleeve_")||n.StartsWith("Acs_CenterSleeve_")))sum+=p.Item2;
    }return sum;
   }
   void PrepareFurisode(SkinnedMeshRenderer r){
@@ -51,29 +51,34 @@ namespace Yachiyo {
    Vector3 OriginalWorld(int i){var w=originalWeights[i];var p=vertices[i];return Skin(snapshot,w.boneIndex0,w.weight0,p)+Skin(snapshot,w.boneIndex1,w.weight1,p)+Skin(snapshot,w.boneIndex2,w.weight2,p)+Skin(snapshot,w.boneIndex3,w.weight3,p);}
    foreach(string side in new[]{"Left","Right"}){
     var selected=new List<int>();var adjacent=new Dictionary<string,HashSet<string>>();
-    for(int t=0;t<triangles.Length;t+=3)if(Enumerable.Range(0,3).All(j=>LowerSleeveWeight(originalWeights[triangles[t+j]],furisodeOriginalBones,side)>.08f)){
+    for(int t=0;t<triangles.Length;t+=3)if(Enumerable.Range(0,3).All(j=>SleeveSurfaceWeight(originalWeights[triangles[t+j]],furisodeOriginalBones,side)>.08f)){
      selected.Add(t);for(int j=0;j<3;j++){string a=SleevePositionKey(vertices[triangles[t+j]]),b=SleevePositionKey(vertices[triangles[t+(j+1)%3]]);if(!adjacent.ContainsKey(a))adjacent[a]=new HashSet<string>();if(!adjacent.ContainsKey(b))adjacent[b]=new HashSet<string>();adjacent[a].Add(b);adjacent[b].Add(a);}
     }
     var seen=new HashSet<string>();var faces=new HashSet<int>();int walls=0;
     foreach(var first in adjacent.Keys){
      if(seen.Contains(first))continue;var nodes=new HashSet<string>();var pending=new Stack<string>();pending.Push(first);
      while(pending.Count>0){var p=pending.Pop();if(!seen.Add(p))continue;nodes.Add(p);foreach(var n in adjacent[p])pending.Push(n);}
-     if(nodes.Count<80)continue;walls++;faces.UnionWith(selected.Where(t=>nodes.Contains(SleevePositionKey(vertices[triangles[t]]))));
+     var component=selected.Where(t=>nodes.Contains(SleevePositionKey(vertices[triangles[t]]))).ToArray();
+     // Main sleeve walls and the ruffled cuff reach the arm. Detached bow
+     // ornaments below the cuff retain their existing garment solver.
+     if(nodes.Count<80||component.Max(t=>Mathf.Max(vertices[triangles[t]].z,vertices[triangles[t+1]].z,vertices[triangles[t+2]].z))<1.3f)continue;
+     walls++;faces.UnionWith(component);
     }
-    if(walls!=2)throw new InvalidOperationException("Expected two original furisode walls on "+side+", found "+walls);
+    if(walls!=2)throw new InvalidOperationException("Expected sleeve shell and cuff on "+side+", found "+walls);
     var ids=faces.SelectMany(t=>new[]{triangles[t],triangles[t+1],triangles[t+2]}).Distinct().ToArray();
     var kept=Enumerable.Range(0,triangles.Length/3).Where(t=>!faces.Contains(t*3)).SelectMany(t=>new[]{triangles[t*3],triangles[t*3+1],triangles[t*3+2]}).ToArray();
     var seamKeys=new HashSet<string>(kept.Select(i=>SleevePositionKey(vertices[i])));var seam=ids.Where(i=>seamKeys.Contains(SleevePositionKey(vertices[i]))).ToArray();
     if(seam.Length<8)throw new InvalidOperationException("Furisode seam missing");
-    float minX=ids.Min(i=>Mathf.Abs(vertices[i].x)),maxX=ids.Max(i=>Mathf.Abs(vertices[i].x));
-    float rootMax=seam.Max(i=>Mathf.Abs(vertices[i].x)),top=seam.Max(i=>vertices[i].z),bottom=ids.Min(i=>vertices[i].z),height=top-bottom;
+    float minX=.19f,maxX=ids.Max(i=>Mathf.Abs(vertices[i].x));
+    var upperEdge=ids.Where(i=>vertices[i].z>1.285f&&Mathf.Abs(vertices[i].x)>.18f).ToArray();
+    float rootMax=upperEdge.Max(i=>Mathf.Abs(vertices[i].x)),top=1.335f,bottom=ids.Min(i=>vertices[i].z),height=top-bottom;
     float sign=Mathf.Sign(vertices[ids[0]].x);var grid=new SleeveGrid{side=side,nodes=new Transform[SleeveColumns,SleeveRows],rest=new Quaternion[SleeveColumns,SleeveRows],anchors=new SleeveAnchor[SleeveColumns]};
     var baseIndex=bones.Count;
     for(int col=0;col<SleeveColumns;col++){
      // Anchor beneath its authored support bone so resets and disabled
      // frames retain the character's root motion, not world-origin poses.
      float u=(float)col/(SleeveColumns-1),x=Mathf.Lerp(minX,rootMax,u);
-     var near=seam.OrderBy(i=>Mathf.Abs(Mathf.Abs(vertices[i].x)-x)).Take(4).ToArray();var rootPosition=near.Aggregate(Vector3.zero,(p,i)=>p+OriginalWorld(i))/near.Length;
+     var near=upperEdge.OrderBy(i=>Mathf.Abs(Mathf.Abs(vertices[i].x)-x)+Mathf.Abs(vertices[i].z-top)*.4f).Take(4).ToArray();var rootPosition=near.Aggregate(Vector3.zero,(p,i)=>p+OriginalWorld(i))/near.Length;
      var support=furisodeOriginalBones[originalWeights[near[0]].boneIndex0];float depth=near.Average(i=>vertices[i].y);
      for(int row=0;row<SleeveRows;row++){
       float v=(float)row/(SleeveRows-1);var node=new GameObject("Furisode / "+side+" / "+col+" / "+row).transform;node.SetParent(row==0?support:grid.nodes[col,row-1],true);
@@ -85,7 +90,11 @@ namespace Yachiyo {
     foreach(int i in ids){
      float v=Mathf.Clamp01((top-vertices[i].z)/height);float u=Mathf.Clamp01((Mathf.Abs(vertices[i].x)-minX)/(Mathf.Lerp(rootMax,maxX,v)-minX));
      float cx=u*(SleeveColumns-1),cy=v*(SleeveRows-1);int x=Mathf.Min(SleeveColumns-2,(int)cx),y=Mathf.Min(SleeveRows-2,(int)cy);float fx=cx-x,fy=cy-y;
-     float distance=seam.Min(j=>new Vector2(vertices[i].x-vertices[j].x,vertices[i].z-vertices[j].z).magnitude);float blend=Mathf.SmoothStep(0,1,distance/.09f);
+     float distance=seam.Min(j=>new Vector2(vertices[i].x-vertices[j].x,vertices[i].z-vertices[j].z).magnitude);
+     // Preserve the original shoulder roll and its seam exactly. From the
+     // underarm onward, cuff, forearm and hanging panel share one surface.
+     float shoulder=Mathf.Lerp(1,Mathf.SmoothStep(0,1,(Mathf.Abs(vertices[i].x)-.24f)/.10f),Mathf.SmoothStep(0,1,(vertices[i].z-1.15f)/.08f));
+     float blend=Mathf.SmoothStep(0,1,distance/.035f)*shoulder;
      var values=new Dictionary<int,float>();void Add(int bone,float w){if(w>0)values[bone]=values.TryGetValue(bone,out var old)?old+w:w;}
      var w=originalWeights[i];Add(w.boneIndex0,w.weight0*(1-blend));Add(w.boneIndex1,w.weight1*(1-blend));Add(w.boneIndex2,w.weight2*(1-blend));Add(w.boneIndex3,w.weight3*(1-blend));
      Add(baseIndex+x*SleeveRows+y,(1-fx)*(1-fy)*blend);Add(baseIndex+(x+1)*SleeveRows+y,fx*(1-fy)*blend);Add(baseIndex+x*SleeveRows+y+1,(1-fx)*fy*blend);Add(baseIndex+(x+1)*SleeveRows+y+1,fx*fy*blend);
@@ -106,6 +115,7 @@ namespace Yachiyo {
     s.gravity=6;s.damping=new CurveSerializeData(.13f);s.radius=new CurveSerializeData(.012f);s.tetherConstraint.distanceCompression=.95f;
     s.triangleBendingConstraint.stiffness=.035f;s.angleRestorationConstraint.stiffness=new CurveSerializeData(.015f,1,.1f);s.angleRestorationConstraint.velocityAttenuation=.35f;
     s.angleLimitConstraint.useAngleLimit=true;s.angleLimitConstraint.limitAngle=new CurveSerializeData(135);s.inertiaConstraint.localInertia=.75f;
+    s.motionConstraint.useMaxDistance=true;s.motionConstraint.maxDistance=new CurveSerializeData(.7f,.035f,1);
     s.selfCollisionConstraint.selfMode=SelfCollisionConstraint.SelfCollisionMode.FullMesh;s.selfCollisionConstraint.syncMode=SelfCollisionConstraint.SelfCollisionMode.FullMesh;s.selfCollisionConstraint.syncPartner=garment;s.selfCollisionConstraint.surfaceThickness=new CurveSerializeData(.008f);s.selfCollisionConstraint.clothMass=.45f;
     foreach(var node in grid.nodes){bool pin=grid.anchors.Any(a=>a.root==node);cloth.GetSerializeData2().boneAttributeDict[node]=pin?VertexAttribute.Fixed:VertexAttribute.Move;if(pin)info.fixedVertices++;else info.movable++;}
    }
