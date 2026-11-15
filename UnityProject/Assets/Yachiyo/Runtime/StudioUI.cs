@@ -180,7 +180,7 @@ namespace Yachiyo {
    if(Button(new Rect(203,h-94,panel-175,32),settings?"收起设置":"场景设置")){settings=!settings;cameraSettings=false;serviceFocusRequested=settings;}
    float right=w*(UnifiedDirectorHost.IsBundled?.52f:.34f)+28;
    Text(right,92,520,22,"TSUKUYOMI  /  月见一万代  ·  "+BackendLabel+" 动作服务",small);
-   if(clothing)Text(right,119,300,22,clothing.simulationEnabled?"衣袖 · 裙摆   /   Unity Cloth 已开启":"实时布料已关闭  /  F7 开启",small);
+   if(clothing)Text(right,119,300,22,clothing.simulationEnabled?"衣袖 · 裙摆   /   实时布料已开启":"实时布料已关闭  /  F7 开启",small);
    Text(right,h-56,440,26,avatar.CurrentAction+"  ·  "+avatar.MotionSource,small);
    if(Button(new Rect(w-150,h-53,120,34),"停止  ESC"))StopMotion();
    if(Button(new Rect(w-200,90,172,36),cameraSettings?"收起视角  F8":"调整视角  F8")){cameraSettings=!cameraSettings;settings=false;cameraFocusRequested=cameraSettings;}

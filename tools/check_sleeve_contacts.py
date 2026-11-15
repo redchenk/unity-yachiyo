@@ -17,6 +17,7 @@ def deform(m):
     waist,up,right,forward=(vec(m[k]) for k in ['waist','up','right','forward'])
     for i,world in enumerate(verts):
         contact=m['contacts'][i];side=contact['x'];free=smooth(.001,.03,contact['y']);sleeve=abs(side)>.05
+        if sleeve and m.get('authoredSleeves',False):continue
         height=(world-waist).dot(up);shift=0
         if not(height<.02 or (sleeve and free>0)):continue
         direction=vec(m['leftDirection' if side<0 else 'rightDirection']).normalized()

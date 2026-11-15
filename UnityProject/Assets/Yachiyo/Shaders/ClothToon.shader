@@ -12,7 +12,7 @@ Shader "Yachiyo/ClothToon" {
    #include "Lighting.cginc"
    sampler2D _MainTex; float4 _MainTex_ST; fixed4 _Color; float _Cutoff,_FaceLighting,_SleeveTwoSided;
    float4 _FaceOrigin,_FaceForward,_FaceRight,_FaceUp;
-   float _ClothCollision,_ClothPadding,_ClothColliderCount,_SleeveContactMargin;
+   float _ClothCollision,_ClothPadding,_ClothColliderCount,_SleeveContactMargin,_AuthoredSleeves;
    float4 _ClothCapsuleA[12],_ClothCapsuleB[12];
    float4 _ClothWaist,_ClothUp,_ClothRight,_ClothForward,_SleeveLeftDirection,_SleeveRightDirection;
    struct appdata { float4 vertex:POSITION; float3 normal:NORMAL; float2 uv:TEXCOORD0; float2 liningUV:TEXCOORD1; float2 contact:TEXCOORD2; };
@@ -23,7 +23,8 @@ Shader "Yachiyo/ClothToon" {
     float free=smoothstep(.001,.03,v.contact.y);
     float height=dot(world-_ClothWaist.xyz,_ClothUp.xyz);
     float3 direction=normalize(v.contact.x<0?_SleeveLeftDirection.xyz:_SleeveRightDirection.xyz);
-    if(_ClothCollision>.5 && (height<.02 || (sleeve&&free>0))){
+    bool originalSleeve=sleeve&&_AuthoredSleeves>.5;
+    if(_ClothCollision>.5 && !originalSleeve && (height<.02 || (sleeve&&free>0))){
      // A strictly increasing radial map keeps stacked skirt layers apart.
      // Hard clamping every layer onto one radius creates coincident triangles.
      for(int j=0;j<12;j++)if(j<_ClothColliderCount){
@@ -65,7 +66,7 @@ Shader "Yachiyo/ClothToon" {
       }
      }
     }
-    if(sleeve && _ClothCollision>.5 && sleeveShift>0)world+=direction*sleeveShift*.8;
+    if(sleeve && !originalSleeve && _ClothCollision>.5 && sleeveShift>0)world+=direction*sleeveShift*.8;
     o.pos=mul(UNITY_MATRIX_VP,float4(world,1));o.uv=TRANSFORM_TEX(v.uv,_MainTex);o.normal=UnityObjectToWorldNormal(v.normal);o.worldPos=world;o.liningUV=TRANSFORM_TEX(v.liningUV,_MainTex);return o;
    }
    fixed4 frag(v2f i,fixed facing:VFACE):SV_Target {

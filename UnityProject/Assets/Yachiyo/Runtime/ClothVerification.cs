@@ -16,7 +16,7 @@ namespace Yachiyo {
    public List<State>states=new List<State>();
   }
   [Serializable]class State{public string name,worstProxy;public float maxOffset,maxProxyPenetration;}
-  [Serializable]class SurfaceSnapshot{public string name;public Vector3[] vertices;public Vector2[] contacts;public int[] triangles;public Vector4[] capsuleA,capsuleB;public Vector4 waist,up,right,forward,leftDirection,rightDirection;public float padding,count,sleeveMargin;public bool contactsApplied;}
+  [Serializable]class SurfaceSnapshot{public string name;public Vector3[] vertices;public Vector2[] contacts;public int[] triangles;public Vector4[] capsuleA,capsuleB;public Vector4 waist,up,right,forward,leftDirection,rightDirection;public float padding,count,sleeveMargin;public bool contactsApplied,authoredSleeves;}
   [Serializable]class SurfaceSnapshots{public List<SurfaceSnapshot> meshes=new List<SurfaceSnapshot>();}
   [Serializable]class RigBone{public string name,parent;public Vector3 position;public Quaternion rotation;}
   [Serializable]class RigMesh{public string name;public string[] bones;public Vector4[] indices,weights;}
@@ -118,7 +118,7 @@ namespace Yachiyo {
     var baked=new Mesh();r.BakeMesh(baked);var vertices=baked.vertices;
     for(int i=0;i<vertices.Length;i++)vertices[i]=r.transform.TransformPoint(vertices[i]);
     var p=new MaterialPropertyBlock();r.GetPropertyBlock(p);
-    surfaces.meshes.Add(new SurfaceSnapshot{name=r.name.StartsWith("cloth")||r.name.StartsWith("sleeve-")?r.name:r.sharedMesh.name,vertices=vertices,contacts=r.sharedMesh.uv3,triangles=baked.triangles,capsuleA=p.GetVectorArray("_ClothCapsuleA"),capsuleB=p.GetVectorArray("_ClothCapsuleB"),waist=p.GetVector("_ClothWaist"),up=p.GetVector("_ClothUp"),right=p.GetVector("_ClothRight"),forward=p.GetVector("_ClothForward"),leftDirection=p.GetVector("_SleeveLeftDirection"),rightDirection=p.GetVector("_SleeveRightDirection"),padding=p.GetFloat("_ClothPadding"),sleeveMargin=p.GetFloat("_SleeveContactMargin"),count=p.GetFloat("_ClothColliderCount")});UnityEngine.Object.Destroy(baked);
+    surfaces.meshes.Add(new SurfaceSnapshot{authoredSleeves=avatar.GetComponent<GarmentPhysics>().PreservesOriginalSleeves,name=r.name.StartsWith("cloth")||r.name.StartsWith("sleeve-")?r.name:r.sharedMesh.name,vertices=vertices,contacts=r.sharedMesh.uv3,triangles=baked.triangles,capsuleA=p.GetVectorArray("_ClothCapsuleA"),capsuleB=p.GetVectorArray("_ClothCapsuleB"),waist=p.GetVector("_ClothWaist"),up=p.GetVector("_ClothUp"),right=p.GetVector("_ClothRight"),forward=p.GetVector("_ClothForward"),leftDirection=p.GetVector("_SleeveLeftDirection"),rightDirection=p.GetVector("_SleeveRightDirection"),padding=p.GetFloat("_ClothPadding"),sleeveMargin=p.GetFloat("_SleeveContactMargin"),count=p.GetFloat("_ClothColliderCount")});UnityEngine.Object.Destroy(baked);
    }
    foreach(var hem in avatar.GetComponent<GarmentPhysics>().Native.hems){
     surfaces.meshes.Add(new SurfaceSnapshot{name="physics-"+hem.renderer.name,vertices=hem.PhysicsWorldVertices(),triangles=hem.PhysicsTriangles,contactsApplied=true});

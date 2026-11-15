@@ -23,6 +23,9 @@ namespace Yachiyo {
   public int ParticleCount {get{int n=0;foreach(var c in chains)n+=c.bones.Length;return n;}}
   public int MovableCount=>ParticleCount-chains.Length;
   public NativeClothRig Native {get;private set;}
+  public AuthoredSleevePhysics Sleeves {get;private set;}
+  public bool UsesAuthoredSleeves=>Sleeves!=null&&Sleeves.Available;
+  public bool PreservesOriginalSleeves=>Sleeves!=null&&Sleeves.Available;
   public float LastMaxOffset {get;private set;}
   public float LastMaxPenetration {get;private set;}
   public float LastTransferMs {get;private set;}
@@ -60,7 +63,9 @@ namespace Yachiyo {
     mesh.uv3=contacts;r.sharedMesh=mesh;
    }
    surfaces=clothing.ToArray();surfaceProperties=new MaterialPropertyBlock();
-   shapes=new BodyShape[bodyCapsules.Length];previousHips=hips.position;previousRotation=hips.rotation;initialized=true;Native=new NativeClothRig(this);
+   shapes=new BodyShape[bodyCapsules.Length];previousHips=hips.position;previousRotation=hips.rotation;initialized=true;
+   Sleeves=new AuthoredSleevePhysics(this);
+   Native=new NativeClothRig(this);
   }
   public void SetSimulation(bool value){simulationEnabled=value;ResetSimulation();}
   void AddHandCollider(Transform hand,Transform finger,string name,List<CapsuleCollider> colliders){
@@ -68,12 +73,13 @@ namespace Yachiyo {
    var t=new GameObject("Cloth collision "+name).transform;t.SetParent(hand,false);t.position=(hand.position+tip)*.5f;t.rotation=Quaternion.FromToRotation(Vector3.up,axis);
    var c=t.gameObject.AddComponent<CapsuleCollider>();c.direction=1;c.radius=.034f;c.height=axis.magnitude+c.radius*2;c.isTrigger=true;colliders.Add(c);
   }
-  public void ResetSimulation(){reset=true;}
+  public void ResetSimulation(){reset=true;Sleeves?.Reset();}
   void RestorePose(){foreach(var c in chains)for(int i=0;i<c.bones.Length;i++)c.bones[i].localRotation=c.rest[i];}
   void Update(){if(initialized)Native.Prepare();}
-  void LateUpdate(){
+  void LateUpdate()=>Tick(Time.deltaTime);
+  public void Tick(float deltaTime){
    Initialize();var timer=System.Diagnostics.Stopwatch.StartNew();RestorePose();LastMaxOffset=0;LastMaxPenetration=0;
-   bool jump=(hips.position-previousHips).sqrMagnitude>.5f*.5f||Quaternion.Angle(hips.rotation,previousRotation)>90||Time.unscaledDeltaTime>.2f;
+   bool jump=(hips.position-previousHips).sqrMagnitude>.5f*.5f||Quaternion.Angle(hips.rotation,previousRotation)>90||deltaTime>.2f;
    previousHips=hips.position;previousRotation=hips.rotation;
    foreach(var c in chains){
     for(int i=0;i<c.bones.Length;i++)c.targets[i]=c.bones[i].position;
@@ -81,7 +87,8 @@ namespace Yachiyo {
     c.anchor=c.targets[0];c.positions[0]=c.anchor;
    }
    Native.Prepare();if(reset||jump)Native.Reset(simulationEnabled);
-   reset=false;if(!simulationEnabled){ApplySurfaceContacts(false);LastTransferMs=0;return;}
+   bool resetSleeves=reset||jump;reset=false;
+   if(!simulationEnabled){Sleeves?.Tick(deltaTime,true,false);ApplySurfaceContacts(false);LastTransferMs=0;return;}
    for(int i=0;i<shapes.Length;i++)GetCapsule(bodyCapsules[i],out shapes[i].a,out shapes[i].b,out shapes[i].radius);
    Native.Sample();
    if(!Native.Finite){Native.Reset(true);return;}
@@ -92,17 +99,18 @@ namespace Yachiyo {
    // Bone-length-preserving transfer and a render-surface contact shell follow
    // the native solver. They do not integrate gravity or predict cloth motion.
    // Only rotations change: the original mesh, layer spacing and bone lengths stay intact.
-   foreach(var c in chains)if(c.skirt||!inspectRestSleeves)for(int i=0;i<c.bones.Length-1;i++){
+   foreach(var c in chains)if(c.skirt||!UsesAuthoredSleeves&&!inspectRestSleeves)for(int i=0;i<c.bones.Length-1;i++){
     var bone=c.bones[i];var child=c.bones[i+1];var from=child.position-bone.position;var to=c.positions[i+1]-bone.position;
     if(from.sqrMagnitude>.000001f&&to.sqrMagnitude>.000001f){bone.rotation=Quaternion.FromToRotation(from,to)*bone.rotation;AlignSleeveTwist(c,i,to);}
    }
    // Re-project after reconstructing rotations: exact bone lengths can move solved points inward.
-   for(int pass=0;pass<6;pass++)foreach(var c in chains)if(c.skirt||!inspectRestSleeves)for(int i=0;i<c.bones.Length-1;i++){
+   for(int pass=0;pass<6;pass++)foreach(var c in chains)if(c.skirt||!UsesAuthoredSleeves&&!inspectRestSleeves)for(int i=0;i<c.bones.Length-1;i++){
     var bone=c.bones[i];var child=c.bones[i+1];var from=child.position-bone.position;
     var to=ProjectCollisions(child.position,c.skirt)-bone.position;
     to=AvoidBodiesAtLength(bone.position,to,from.magnitude)*from.magnitude;
     if(from.sqrMagnitude>.000001f&&to.sqrMagnitude>.000001f){bone.rotation=Quaternion.FromToRotation(from,to)*bone.rotation;AlignSleeveTwist(c,i,to);}
    }
+   if(UsesAuthoredSleeves)Sleeves.Tick(deltaTime,resetSleeves,true);
    foreach(var c in chains)for(int i=1;i<c.bones.Length;i++){
     c.positions[i]=c.bones[i].position;LastMaxOffset=Mathf.Max(LastMaxOffset,Vector3.Distance(c.positions[i],c.targets[i]));
     for(int s=0;s<shapes.Length;s++){var shape=shapes[s];float penetration=shape.radius+.018f-Vector3.Distance(c.positions[i],Closest(c.positions[i],shape.a,shape.b));if(penetration>LastMaxPenetration){LastMaxPenetration=penetration;LastPenetratingBone=c.bones[i].name+" / "+bodyCapsules[s].name;}}
@@ -131,7 +139,21 @@ namespace Yachiyo {
     var end=shape.b;
     capsuleA[count]=new Vector4(top.x,top.y,top.z,shape.radius+extra);capsuleB[count]=new Vector4(end.x,end.y,end.z,leg?0:limb?2:1);count++;
    }
-   foreach(var r in surfaces){r.GetPropertyBlock(surfaceProperties);surfaceProperties.SetFloat("_ClothCollision",active?1:0);surfaceProperties.SetFloat("_ClothColliderCount",count);surfaceProperties.SetVectorArray("_ClothCapsuleA",capsuleA);surfaceProperties.SetVectorArray("_ClothCapsuleB",capsuleB);surfaceProperties.SetVector("_ClothWaist",new Vector4(hips.position.x,hips.position.y,hips.position.z,0));surfaceProperties.SetVector("_ClothUp",hips.up);surfaceProperties.SetVector("_ClothRight",hips.right);surfaceProperties.SetVector("_ClothForward",hips.forward);surfaceProperties.SetVector("_SleeveLeftDirection",SleeveDirection(leftHand,-1));surfaceProperties.SetVector("_SleeveRightDirection",SleeveDirection(rightHand,1));surfaceProperties.SetFloat("_SleeveContactMargin",.03f);surfaceProperties.SetFloat("_ClothPadding",r.name=="cloth1"?.02f:.012f);r.SetPropertyBlock(surfaceProperties);}
+   foreach(var r in surfaces){r.GetPropertyBlock(surfaceProperties);surfaceProperties.SetFloat("_ClothCollision",active?1:0);surfaceProperties.SetFloat("_AuthoredSleeves",PreservesOriginalSleeves?1:0);surfaceProperties.SetFloat("_ClothColliderCount",count);surfaceProperties.SetVectorArray("_ClothCapsuleA",capsuleA);surfaceProperties.SetVectorArray("_ClothCapsuleB",capsuleB);surfaceProperties.SetVector("_ClothWaist",new Vector4(hips.position.x,hips.position.y,hips.position.z,0));surfaceProperties.SetVector("_ClothUp",hips.up);surfaceProperties.SetVector("_ClothRight",hips.right);surfaceProperties.SetVector("_ClothForward",hips.forward);surfaceProperties.SetVector("_SleeveLeftDirection",SleeveDirection(leftHand,-1));surfaceProperties.SetVector("_SleeveRightDirection",SleeveDirection(rightHand,1));surfaceProperties.SetFloat("_SleeveContactMargin",.03f);surfaceProperties.SetFloat("_ClothPadding",r.name=="cloth1"?.02f:.012f);r.SetPropertyBlock(surfaceProperties);}
+  }
+  internal Vector3 ProjectOriginalSleeveContact(Vector3 point){
+   for(int i=0;i<shapes.Length;i++){
+    var shape=shapes[i];var center=Closest(point,shape.a,shape.b);var away=point-center;
+    string name=bodyCapsules[i].name;float radius=shape.radius+(name.Contains("Hips")||name.Contains("Chest")?.045f:.02f);
+    if(away.sqrMagnitude<radius*radius)point=center+(away.sqrMagnitude>.000001f?away.normalized:hips.forward)*radius;
+   }
+   var local=hips.InverseTransformPoint(point);float below=-local.y;
+   if(below>.1f&&below<1){
+    float t=Mathf.Clamp01(below/.9f);float xRadius=Mathf.Lerp(.19f,.47f,t),zRadius=Mathf.Lerp(.23f,.42f,t);
+    float x=local.x/xRadius,z=(local.z+.025f)/zRadius;float radius=Mathf.Sqrt(x*x+z*z);
+    if(radius<1&&radius>.0001f){local.x/=radius;local.z=(local.z+.025f)/radius-.025f;point=hips.TransformPoint(local);}
+   }
+   return point;
   }
   Vector3 SleeveDirection(Transform hand,float side){var v=Vector3.ProjectOnPlane(hand.position-hips.position,hips.up);return v.sqrMagnitude>.01f?v.normalized:hips.right*side;}
   // Start the hem solver from the already resolved visible sleeve, so its first

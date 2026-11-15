@@ -1,5 +1,19 @@
 {
   "dependencies": {
+    "com.unity.burst": {
+      "version": "2.0.0",
+      "depth": 1,
+      "source": "builtin",
+      "dependencies": {}
+    },
+    "inc.sparkcreative.spcrjointdynamics": {
+      "version": "file:inc.sparkcreative.spcrjointdynamics",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {
+        "com.unity.burst": "1.8.31"
+      }
+    },
     "com.unity.modules.animation": {
       "version": "1.0.0",
       "depth": 0,

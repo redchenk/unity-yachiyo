@@ -37,14 +37,11 @@ namespace Yachiyo {
    sleeveDress=dress.ToArray();
    var skirt=owner.chains.Where(c=>c.skirt&&c.bones.Length>=5).ToArray();
    if(skirt.Length>1)Create(skirt,25,17,true);
-   foreach(var chain in owner.chains.Where(c=>!c.skirt))Create(new[]{chain},7,16,false);
+   if(!owner.UsesAuthoredSleeves)foreach(var chain in owner.chains.Where(c=>!c.skirt))Create(new[]{chain},7,16,false);
    foreach(var chain in owner.chains.Where(c=>c.skirt&&c.bones.Length<5))Create(new[]{chain},5,9,true);
   }
-  // Keep the authored shoulder, upper sleeves and cuffs. Only the four lower
-  // hanging panels receive independent membranes after the idle rig has settled.
-  // Keep the original authored sleeves connected to the body and drive them
-  // through the same bone chains. No detached hem panels are generated.
-  public void EnsureHems(){if(hems.Count==0&&Time.timeSinceLevelLoad>1.2f){hems.AddRange(SleeveHemCloth.Create(owner));VertexCount+=hems.Sum(h=>h.VertexCount);}}
+  // Authored sleeves retain their complete mesh and original bone bindings.
+  public void EnsureHems(){if(!owner.PreservesOriginalSleeves&&hems.Count==0&&Time.timeSinceLevelLoad>1.2f){hems.AddRange(SleeveHemCloth.Create(owner));VertexCount+=hems.Sum(h=>h.VertexCount);}}
 
   static Vector3 Along(GarmentPhysics.Chain c,float t){
    float p=t*(c.bones.Length-1);int i=Mathf.Min((int)p,c.bones.Length-2);
