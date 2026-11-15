@@ -7,8 +7,8 @@ using MagicaCloth2;
 #endif
 
 namespace Yachiyo {
- // One owner for all secondary motion. The source mesh/skin and shoulder support
- // constraints stay authored; solver meshes and collider objects are runtime only.
+ // One owner for all secondary motion. Original geometry and shoulder support
+ // stay authored; the hanging sleeve has a runtime copy of its skin weights.
  public sealed partial class FullCharacterCloth : MonoBehaviour {
   public bool Ready {get;private set;}
   public bool Failed {get;private set;}
@@ -16,6 +16,7 @@ namespace Yachiyo {
   public int GroupCount=>groups.Count;
   public int ProxyVertices {get;private set;}
   public int ColliderCount {get;private set;}
+  public int SimulationFrames {get;private set;}
   public float LastSimulationMs {get;private set;}
   public bool Active {get;private set;}=true;
   public readonly List<GroupInfo> groups=new List<GroupInfo>();
@@ -37,7 +38,7 @@ namespace Yachiyo {
   GarmentPhysics owner;Animator animator;Transform[] originalBones;
   long simulationStart;
   Transform[] ornamentEars=Array.Empty<Transform>();Quaternion[] earDisplay=Array.Empty<Quaternion>();bool earDisplayReady;
-  sealed class SurfaceBinding {public SkinnedMeshRenderer renderer;public Mesh source;public Transform[] bones;public int[] pinned;public Vector3[] vertices;public BoneWeight[] weights;public Matrix4x4[] bindposes;}
+  sealed class SurfaceBinding {public SkinnedMeshRenderer renderer;public Mesh source;public Transform[] bones;public int[] pinned;public Vector3[] vertices,initial;public BoneWeight[] weights;public Matrix4x4[] bindposes;}
   readonly List<SurfaceBinding> bindings=new List<SurfaceBinding>();
   public float MeasurePinnedError(){
    float error=0;var baked=new Mesh();
@@ -60,9 +61,11 @@ namespace Yachiyo {
    CreateColliders();
    var clothes=GetComponentsInChildren<SkinnedMeshRenderer>().Where(r=>r.name=="cloth1"||r.name=="cloth2").OrderBy(r=>r.name).ToArray();
    if(clothes.Length!=2){Fail("Expected the original cloth1 and cloth2 renderers");return;}
-   // All interacting sleeve/skirt layers belong to one surface. This provides
-   // self collision across garments without the one-SyncPartner pairing limit.
+   if(Array.IndexOf(Environment.GetCommandLineArgs(),"--mesh-furisode-baseline")<0)PrepareFurisode(clothes.Single(r=>r.name=="cloth1"));
+   // Cuffs, skirts and ribbons share one collision surface. Both furisode
+   // grids synchronize with it, retaining sleeve-to-skirt contact.
    var garments=MeshGroup("Garments · sleeves / skirt / ribbons",clothes);
+   BuildFurisodeGroups(garments);
    var tails=Roots(t=>t.name.StartsWith("Acs_Twintail",StringComparison.Ordinal));
    BoneGroup("Twintails",tails,.09f,38,.014f,garments);
    BoneGroup("Fringe",Roots(t=>t.name.StartsWith("Acs_FrontHair",StringComparison.Ordinal)),.65f,9,.003f,garments);
@@ -125,7 +128,7 @@ namespace Yachiyo {
     for(int i=0;i<attributes.Length;i++){
      var w=weights[i];var world=r.transform.TransformPoint(vertices[i]);
      float mobile=Mobility(r.bones[w.boneIndex0],world)*w.weight0+Mobility(r.bones[w.boneIndex1],world)*w.weight1+Mobility(r.bones[w.boneIndex2],world)*w.weight2+Mobility(r.bones[w.boneIndex3],world)*w.weight3;
-     bool move=mobile>.25f;attributes[i]=move?VertexAttribute.Move:VertexAttribute.Invalid;
+     bool move=mobile>.25f&&!(r==furisodeSource&&furisodeMask[i]);attributes[i]=move?VertexAttribute.Move:VertexAttribute.Invalid;
      if(move)info.movable++;
     }
     // Keep non-cloth areas (shoulder roll, neck, plush) on exact original
@@ -141,7 +144,7 @@ namespace Yachiyo {
      }
     }
     info.fixedVertices+=attributes.Count(a=>a==VertexAttribute.Fixed);
-    bindings.Add(new SurfaceBinding{renderer=r,source=mesh,bones=r.bones.ToArray(),vertices=mesh.vertices,weights=weights,bindposes=mesh.bindposes,pinned=Enumerable.Range(0,attributes.Length).Where(i=>attributes[i]==VertexAttribute.Invalid&&i%7==0).ToArray()});
+    bindings.Add(new SurfaceBinding{renderer=r,source=furisodeSource==r?furisodeOriginal:mesh,bones=furisodeSource==r?furisodeOriginalBones:r.bones.ToArray(),vertices=mesh.vertices,initial=vertices.Select(r.transform.TransformPoint).ToArray(),weights=furisodeSource==r?furisodeOriginal.boneWeights:weights,bindposes=furisodeSource==r?furisodeOriginal.bindposes:mesh.bindposes,pinned=Enumerable.Range(0,attributes.Length).Where(i=>attributes[i]==VertexAttribute.Invalid&&i%7==0&&!(r==furisodeSource&&furisodeMask[i])).ToArray()});
     Destroy(baked);data.vertexAttributeList.Add(attributes);r.updateWhenOffscreen=true;
     var properties=new MaterialPropertyBlock();r.GetPropertyBlock(properties);properties.SetFloat("_ClothCollision",0);r.SetPropertyBlock(properties);
    }
@@ -220,7 +223,7 @@ namespace Yachiyo {
    var t=new GameObject("Magica body / "+label).transform;t.SetParent(label=="Shoulders"?animator.GetBoneTransform(HumanBodyBones.Chest):a,false);t.position=(a.position+b.position)*.5f;t.rotation=Quaternion.FromToRotation(Vector3.up,b.position-a.position);
    var capsule=t.gameObject.AddComponent<MagicaCapsuleCollider>();capsule.direction=MagicaCapsuleCollider.Direction.Y;capsule.SetSize(radius,radius,Vector3.Distance(a.position,b.position)+radius*2);colliders.Add(capsule);
   }
-  void BeforeSimulation(){simulationStart=System.Diagnostics.Stopwatch.GetTimestamp();}
+  void BeforeSimulation(){SimulationFrames++;simulationStart=System.Diagnostics.Stopwatch.GetTimestamp();UpdateFurisodeAnchors();}
   void AfterSimulation(){
    // Small stiff decorative ears expose fixed-step quantization more than cloth.
    // Interpolate only their displayed rotation, retaining the solver's inertia.
@@ -234,7 +237,7 @@ namespace Yachiyo {
    LastSimulationMs=(float)((System.Diagnostics.Stopwatch.GetTimestamp()-simulationStart)*1000.0/System.Diagnostics.Stopwatch.Frequency);
   }
   void Fail(string message){Failed=true;Ready=false;Failure=message;Debug.LogError("FULL_CLOTH_FAILED "+message);}
-  void OnDestroy(){MagicaManager.OnPreSimulation-=BeforeSimulation;MagicaManager.OnPostSimulation-=AfterSimulation;}
+  void OnDestroy(){MagicaManager.OnPreSimulation-=BeforeSimulation;MagicaManager.OnPostSimulation-=AfterSimulation;if(furisodeRuntime)Destroy(furisodeRuntime);}
 #endif
   public void SetSimulation(bool value){
    Active=value;

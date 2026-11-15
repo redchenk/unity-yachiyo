@@ -12,7 +12,7 @@ namespace Yachiyo {
   [Serializable]class Report {
    public bool passed,ready,finite=true,noLegacySolvers,originalMeshes,stableAttachments,toggleOff,toggleOn;
    public string solver="Magica Cloth 2.15.0",failure,device;
-   public int frames,colliders,proxyVertices;public float meanFrameMs,p95FrameMs,meanSimulationMs,p95SimulationMs,maxAttachmentError,maxPinnedSurfaceError,ornamentSettledSpeed,ornamentMaxAngle;
+   public int frames,colliders,proxyVertices,furisodeControlPoints;public float meanFrameMs,p95FrameMs,meanSimulationMs,p95SimulationMs,maxAttachmentError,maxPinnedSurfaceError,ornamentSettledSpeed,ornamentMaxAngle,furisodeMaxLocalBend,furisodeMeanLocalBend;
    public List<FullCharacterCloth.GroupInfo> groups;public List<State> states=new List<State>();
    public FullCharacterCloth.HangingSleeveSample[] hangingSleeves;
   }
@@ -27,7 +27,7 @@ namespace Yachiyo {
    if(!cloth){report.failure="Full solver unavailable";Finish();yield break;}
    float deadline=Time.realtimeSinceStartup+60;
    while(!cloth.Ready&&!cloth.Failed&&Time.realtimeSinceStartup<deadline)yield return null;
-   report.ready=cloth.Ready;report.failure=cloth.Failure;report.groups=cloth.groups;report.colliders=cloth.ColliderCount;report.proxyVertices=cloth.ProxyVertices;
+   report.ready=cloth.Ready;report.failure=cloth.Failure;report.groups=cloth.groups;report.colliders=cloth.ColliderCount;report.proxyVertices=cloth.ProxyVertices;report.furisodeControlPoints=cloth.FurisodeControlPoints;
    if(!cloth.Ready){Finish();yield break;}
    report.noLegacySolvers=garment.Native==null&&garment.Sleeves==null&&!avatar.GetComponents<HairPhysics>().Any(h=>h.enabled)&&avatar.GetComponentsInChildren<Cloth>().Length==0;
    avatar.followPointer=false;yield return new WaitForSeconds(3);
@@ -44,7 +44,7 @@ namespace Yachiyo {
     var state=new State{name=name};float start=Time.realtimeSinceStartup;int capture=0;
     while(Time.realtimeSinceStartup-start<6){
      yield return new WaitForEndOfFrame();state.frames++;report.frames++;
-     frameMs.Add(Time.unscaledDeltaTime*1000);simulationMs.Add(cloth.LastSimulationMs);
+     frameMs.Add(Time.unscaledDeltaTime*1000);simulationMs.Add(cloth.LastSimulationMs);var bend=cloth.MeasureFurisodeBend();report.furisodeMaxLocalBend=Mathf.Max(report.furisodeMaxLocalBend,bend.y);report.furisodeMeanLocalBend+=bend.x;
      for(int i=0;i<attachments.Length;i++)report.maxAttachmentError=Mathf.Max(report.maxAttachmentError,Vector3.Distance(attachmentPositions[i],attachments[i].localPosition));
      #if YACHIYO_MAGICA
      if(state.frames%60==0)report.maxPinnedSurfaceError=Mathf.Max(report.maxPinnedSurfaceError,cloth.MeasurePinnedError());
@@ -72,11 +72,17 @@ namespace Yachiyo {
    report.originalMeshes=cloth.OriginalMeshesIntact;
    foreach(var c in cloth.GetComponentsInChildren<MagicaCloth>())foreach(var r in c.SerializeData.sourceRenderers){var mesh=c.GetOriginalMesh(r);report.originalMeshes&=mesh&&mesh.vertexCount>0;}
 #endif
-   garment.SetSimulation(false);yield return new WaitForSeconds(.5f);report.toggleOff=!cloth.Active;
-   Capture("off",0);garment.SetSimulation(true);yield return new WaitForSeconds(3);report.toggleOn=cloth.Active&&cloth.Ready;Capture("restored",0);
-   report.meanFrameMs=frameMs.Average();report.p95FrameMs=Percentile(frameMs);report.meanSimulationMs=simulationMs.Average();report.p95SimulationMs=Percentile(simulationMs);
+   // BoneCloth restores animation transforms in EarlyUpdate, then solves
+   // after LateUpdate. Sample displayed physics only at end of frame.
+   garment.SetSimulation(false);yield return new WaitForSeconds(.5f);yield return new WaitForEndOfFrame();report.toggleOff=!cloth.Active;
+   Capture("off",0);garment.SetSimulation(true);yield return new WaitForSeconds(3);yield return new WaitForEndOfFrame();report.toggleOn=cloth.Active&&cloth.Ready;Capture("restored",0);
+   report.furisodeMeanLocalBend/=Mathf.Max(1,report.frames);report.meanFrameMs=frameMs.Average();report.p95FrameMs=Percentile(frameMs);report.meanSimulationMs=simulationMs.Average();report.p95SimulationMs=Percentile(simulationMs);
    report.hangingSleeves=cloth.MeasureHangingSleeves();
-   report.passed=report.ready&&report.finite&&report.noLegacySolvers&&report.originalMeshes&&report.stableAttachments&&report.toggleOff&&report.toggleOn&&report.ornamentSettledSpeed<4&&report.groups.Count==6&&report.groups.All(g=>g.built&&g.movable>0)&&report.hangingSleeves.All(s=>s.vertices>400&&s.movable==s.vertices&&s.meanSimulationOffset>.005f);
+#if YACHIYO_MAGICA
+   Debug.Log("CLOTH_RUNTIME simulationFrames="+cloth.SimulationFrames);
+   foreach(var c in cloth.GetComponentsInChildren<MagicaCloth>()){var t=MagicaManager.Team.GetTeamDataRef(c.Process.TeamId);Debug.Log("CLOTH_RUNTIME "+c.name+" enabled="+c.enabled+" process="+t.IsProcess+" enable="+t.IsEnable+" suspend="+t.flag.IsSet(TeamManager.Flag_SyncSuspend)+" steps="+t.updateCount+" blend="+t.blendWeight+" time="+t.time+" scale="+t.nowTimeScale);}
+#endif
+   report.passed=(cloth.FurisodeControlPoints==0||report.furisodeMaxLocalBend>15)&&report.ready&&report.finite&&report.noLegacySolvers&&report.originalMeshes&&report.stableAttachments&&report.toggleOff&&report.toggleOn&&report.ornamentSettledSpeed<4&&report.groups.Count==(cloth.FurisodeControlPoints>0?8:6)&&report.groups.All(g=>g.built&&g.movable>0)&&report.hangingSleeves.All(s=>s.vertices>400&&s.movable==s.vertices&&s.meanSimulationOffset>.005f&&s.meanSimulationOffset<.8f&&s.maxSimulationOffset<1.3f);
    Finish();
   }
   static float Percentile(List<float> values){var sorted=values.OrderBy(v=>v).ToArray();return sorted[Mathf.Min(sorted.Length-1,(int)(sorted.Length*.95f))];}

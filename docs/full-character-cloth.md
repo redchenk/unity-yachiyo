@@ -11,8 +11,8 @@ The private application uses the user's licensed **Magica Cloth 2.15.0**. The pa
 
 ## Ownership and collision configuration
 
-- `FullCharacterCloth` replaces the old secondary-motion writers before they initialize. The mesh, skin weights, UVs, shoulder constraints, humanoid animation, face and head/neck attachment stay authored.
-- Sleeves, hanging panels, skirt layers and ribbons use one MeshCloth component. Fixed vertices are selected from actual skin weights and attachment positions; only free garment areas move. The component enables full surface self-collision, including sleeve-to-skirt contact, on a reduced simulation mesh.
+- `FullCharacterCloth` replaces the old secondary-motion writers before they initialize. The source assets, geometry, UVs, shoulder constraints, humanoid animation, face and head/neck attachment stay authored. Only the hanging sleeve skin weights are replaced on a runtime mesh copy.
+- Upper sleeves, skirt layers and ribbons use one MeshCloth component. The long hanging sleeves use two BoneCloth surfaces paired with this garment component. Fixed vertices are selected from actual skin weights and attachment positions; only free garment areas move. The component enables full surface self-collision, including sleeve-to-skirt contact, on a reduced simulation mesh.
 - Twintails, fringe, side hair and hair ornaments use BoneCloth. The soft obi ornament uses a small-displacement BoneSpring. The BoneCloth groups have individual stiffness/angle limits and collision pairing with the garment surface. These independent hair/accessory groups are not an all-pairs self-collision system.
 - Body, arms, palms, legs, feet, head, neck, shoulders, obi and floor receive registered Magica colliders. They do not alter game physics or the source model.
 - The fixed-step solver runs at 60 Hz after the application's LateUpdate animation, with at most four catch-up steps. Rendering remains at the application's normal rate. No new background application is required.
@@ -30,8 +30,12 @@ The two small ornament ears interpolate their simulated display rotation over 65
 
 ## Hanging sleeve flexibility
 
-The long `Acs_CenterSleeve` panels are included in the garment MeshCloth. The native regression now separately checks both panels' high-confidence weighted vertices and their deformation relative to authored skinning; body movement alone does not pass that check. Per-side coverage and actual simulation offsets are included in the report.
+Each long sleeve uses an **8-column by 7-row Magica BoneCloth grid** (112 control points total). `SequentialNonLoopMesh` connects neighboring columns, while 8 anchored roots per sleeve preserve the seam. The roots belong to the original support bones and track the authored seam after body animation. Toggle checks sample at the end of the frame: Magica first restores animation transforms in EarlyUpdate and solves after LateUpdate, so sampling between those stages would incorrectly report the unsimulated pose.
 
-The garment profile explicitly permits 90% tether compression, uses lower triangle/angle restoration and a larger movement envelope. This lets the hanging panels fold inward instead of being held at 60% of their rest tether length by the package default. Collision and the original fixed shoulder boundary remain enabled. All original topology, UVs and weights remain unchanged; runtime remeshing is not used.
+The original front/back walls and their lining share the same grid deformation. No faces, UVs, textures or original asset weights are replaced. A runtime copy changes only the hanging region's weights, with a 9 cm transition at the original seam; the upper sleeve and shoulder remain authored. The original MeshCloth excludes these driven vertices, preventing competing writers. The grid has body colliders, self-contact and contact with the garment MeshCloth; it does not add an all-pairs hair-to-sleeve contact system.
+
+The grid uses 0.035 bending stiffness, 0.015 angle restoration fading toward the hem, 0.13 damping and 95% tether compression. Skirt/cuff parameters retain their existing profile. Merely softening the original thin-shell MeshCloth made its lining cross the outer fabric, and runtime triangulation experiments were rejected. Normal builds use the coupled bone surfaces; `--mesh-furisode-baseline` retains the preceding MeshCloth configuration for comparison.
+
+The native report checks all 8 groups, both sleeves' high-confidence vertex coverage, unchanged fixed attachments, local joint bending excluding root rotation, finite surfaces, and off/on after a moving clip. Simulation offsets have an upper bound as well as a lower bound so a sleeve returning to the wrong world location cannot pass.
 
 For a reproducible lift/hold/lower comparison, run `--verify-full-cloth <directory> --cloth-sleeve-stress --idle-seed 7381`. Add `--diagnose-magica-sleeves` to export actual/skinned vertices and selected/proxy data alongside the images. This isolates physical response with the rest of the body frozen; it is separate from the full regression report.
