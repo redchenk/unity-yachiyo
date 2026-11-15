@@ -27,3 +27,11 @@ The private application uses the user's licensed **Magica Cloth 2.15.0**. The pa
 The obi ornament uses damped, small-angle BoneSpring motion limited to 2.5 mm at its anchor. Its own collision envelope is excluded from its ears/tentacles, and that collider is parented outside the simulated hierarchy to avoid feedback.
 
 The two small ornament ears interpolate their simulated display rotation over 65 ms to suppress fixed-step shimmer; this does not drive body animation or other garments.
+
+## Hanging sleeve flexibility
+
+The long `Acs_CenterSleeve` panels are included in the garment MeshCloth. The native regression now separately checks both panels' high-confidence weighted vertices and their deformation relative to authored skinning; body movement alone does not pass that check. Per-side coverage and actual simulation offsets are included in the report.
+
+The garment profile explicitly permits 90% tether compression, uses lower triangle/angle restoration and a larger movement envelope. This lets the hanging panels fold inward instead of being held at 60% of their rest tether length by the package default. Collision and the original fixed shoulder boundary remain enabled. All original topology, UVs and weights remain unchanged; runtime remeshing is not used.
+
+For a reproducible lift/hold/lower comparison, run `--verify-full-cloth <directory> --cloth-sleeve-stress --idle-seed 7381`. Add `--diagnose-magica-sleeves` to export actual/skinned vertices and selected/proxy data alongside the images. This isolates physical response with the rest of the body frozen; it is separate from the full regression report.

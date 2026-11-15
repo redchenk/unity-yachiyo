@@ -9,7 +9,7 @@ using MagicaCloth2;
 namespace Yachiyo {
  // One owner for all secondary motion. The source mesh/skin and shoulder support
  // constraints stay authored; solver meshes and collider objects are runtime only.
- public sealed class FullCharacterCloth : MonoBehaviour {
+ public sealed partial class FullCharacterCloth : MonoBehaviour {
   public bool Ready {get;private set;}
   public bool Failed {get;private set;}
   public string Failure {get;private set;}="";
@@ -106,10 +106,13 @@ namespace Yachiyo {
    s.clothType=ClothProcess.ClothType.MeshCloth;s.sourceRenderers.AddRange(renderers);
    s.reductionSetting.simpleDistance=.002f;s.reductionSetting.shapeDistance=.024f;
    s.radius=new CurveSerializeData(.004f);s.gravity=7;
-   s.triangleBendingConstraint.stiffness=.35f;
-   s.angleRestorationConstraint.stiffness=new CurveSerializeData(.14f,1,.3f);s.angleRestorationConstraint.velocityAttenuation=.35f;
-   s.angleLimitConstraint.useAngleLimit=true;s.angleLimitConstraint.limitAngle=new CurveSerializeData(65);
-   s.motionConstraint.useMaxDistance=true;s.motionConstraint.maxDistance=new CurveSerializeData(.40f,.04f,1);
+   // Long furisode panels must fold toward their attachment, rather than be
+   // held at the package's default minimum tether length (60% of rest).
+   s.tetherConstraint.distanceCompression=.9f;
+   s.triangleBendingConstraint.stiffness=.12f;
+   s.angleRestorationConstraint.stiffness=new CurveSerializeData(.045f,1,.15f);s.angleRestorationConstraint.velocityAttenuation=.55f;
+   s.angleLimitConstraint.useAngleLimit=true;s.angleLimitConstraint.limitAngle=new CurveSerializeData(95);
+   s.motionConstraint.useMaxDistance=true;s.motionConstraint.maxDistance=new CurveSerializeData(.65f,.05f,1);
    // The source garment has intentional lining folds and mixed normal directions;
    // body + cloth contacts handle them without a global inward-facing Backstop.
    s.motionConstraint.useBackstop=false;
